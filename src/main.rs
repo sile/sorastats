@@ -14,6 +14,9 @@ struct Args {
 
     #[clap(long, default_value_t = simplelog::LevelFilter::Info, possible_values = ["DEBUG", "INFO", "WARN", "ERROR"])]
     loglevel: simplelog::LevelFilter,
+
+    #[clap(long)]
+    truncate_log: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -21,18 +24,19 @@ fn main() -> anyhow::Result<()> {
 
     setup_logger(&args)?;
 
-    let x: serde_json::Value = ureq::post(&args.polling_opt.sora_url)
-        .set("x-sora-target", "Sora_20171101.GetStatsAllConnections")
-        .call()?
-        .into_json()?;
-    println!("{}", x);
+    let rx = args.polling_opt.start_polling_thread()?;
+    loop {
+        rx.recv()?;
+    }
+
     Ok(())
 }
 
 fn setup_logger(args: &Args) -> anyhow::Result<()> {
     if let Some(logfile) = &args.logfile {
         let file = std::fs::OpenOptions::new()
-            .append(true)
+            .append(!args.truncate_log)
+            .truncate(args.truncate_log)
             .create(true)
             .write(true)
             .open(logfile)
