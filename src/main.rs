@@ -28,8 +28,6 @@ fn main() -> anyhow::Result<()> {
     loop {
         rx.recv()?;
     }
-
-    Ok(())
 }
 
 fn setup_logger(args: &Args) -> anyhow::Result<()> {
