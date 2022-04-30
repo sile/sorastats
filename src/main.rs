@@ -1,13 +1,16 @@
 use anyhow::Context;
 use clap::Parser;
-use sorastats::poller;
+use sorastats::{poller, ui};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
 #[clap(version)]
 struct Args {
     #[clap(flatten)]
-    polling_opt: poller::StatsPollingOptions,
+    polling: poller::StatsPollingOptions,
+
+    #[clap(flatten)]
+    ui: ui::UiOpts,
 
     #[clap(long)]
     logfile: Option<PathBuf>,
@@ -17,9 +20,6 @@ struct Args {
 
     #[clap(long)]
     truncate_log: bool,
-
-    #[clap(long, default_value_t = 600.0)]
-    pub retention_period: f64,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -27,10 +27,9 @@ fn main() -> anyhow::Result<()> {
 
     setup_logger(&args)?;
 
-    let rx = args.polling_opt.start_polling_thread()?;
-    loop {
-        rx.recv()?;
-    }
+    let rx = args.polling.start_polling_thread()?;
+    let app = ui::App::new(rx, args.ui);
+    app.run()
 }
 
 fn setup_logger(args: &Args) -> anyhow::Result<()> {
