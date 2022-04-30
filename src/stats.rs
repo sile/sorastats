@@ -1,7 +1,7 @@
-use chrono::DateTime;
-use chrono::FixedOffset;
+use ordered_float::OrderedFloat;
 use std::collections::BTreeMap;
 
+// TODO: delete
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum StatsKey {
     Total,
@@ -17,21 +17,26 @@ pub type Counters = BTreeMap<String, u64>;
 
 pub type Stats = BTreeMap<String, StatsValue>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum StatsValue {
-    Counter(u64),
-    Number(serde_json::value::Number),
+    Number(OrderedFloat<f64>),
     Bool(bool),
     String(String),
 }
 
+impl std::fmt::Display for StatsValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Number(x) => write!(f, "{x}"),
+            Self::Bool(x) => write!(f, "{x}"),
+            Self::String(x) => write!(f, "{x}"),
+        }
+    }
+}
+
+// TODO: remove
 #[derive(Debug, Clone)]
 pub struct ConnectionStats {
-    pub timestamp: DateTime<FixedOffset>,
-    pub channel_id: String,
-    pub client_id: String,
-    pub bundle_id: String,
-    pub connection_id: String,
     pub stats: Stats,
 }
 
@@ -40,27 +45,10 @@ impl ConnectionStats {
         let obj = value
             .as_object()
             .ok_or_else(|| anyhow::anyhow!("not a JSON object"))?;
-
-        let timestamp = DateTime::parse_from_rfc3339(&get_string(obj, "timestamp")?)?;
-
-        let channel_id = get_string(obj, "channel_id")?;
-        let client_id = get_string(obj, "client_id")?;
-        let connection_id = get_string(obj, "connection_id")?;
-        let bundle_id = get_string(obj, "bundle_id")
-            .ok()
-            .unwrap_or_else(|| connection_id.clone());
-
         let mut key = String::new();
         let mut stats = Stats::new();
         collect_stats(obj, &mut stats, &mut key);
-        Ok(Self {
-            timestamp,
-            channel_id,
-            client_id,
-            connection_id,
-            bundle_id,
-            stats,
-        })
+        Ok(Self { stats })
     }
 }
 
@@ -77,14 +65,10 @@ fn collect_stats(
         key.push_str(k);
         match v {
             serde_json::Value::Number(v) => {
-                if k == "unstable_level" {
-                } else if let Some(v) = v.as_u64() {
-                    if v > 0 {
-                        stats.insert(key.clone(), StatsValue::Counter(v));
-                    }
-                }
-                if !stats.contains_key(key) {
-                    stats.insert(key.clone(), StatsValue::Number(v.clone()));
+                if let Some(v) = v.as_f64() {
+                    stats.insert(key.clone(), StatsValue::Number(OrderedFloat(v)));
+                } else {
+                    log::warn!("too large number (ignored): {v}");
                 }
             }
             serde_json::Value::Bool(v) => {
@@ -102,17 +86,4 @@ fn collect_stats(
         };
         key.truncate(old_len);
     }
-}
-
-fn get_string(
-    obj: &serde_json::Map<String, serde_json::Value>,
-    key: &str,
-) -> anyhow::Result<String> {
-    let value = obj
-        .get(key)
-        .ok_or_else(|| anyhow::anyhow!("missing {key:?}"))?;
-    Ok(value
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("{key:?} is not a JSON string"))?
-        .to_owned())
 }

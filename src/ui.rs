@@ -1,7 +1,7 @@
 use crate::poller::StatsReceiver;
-use crate::stats::ConnectionStats;
+use crate::stats::{ConnectionStats, Stats, StatsValue};
 use clap::Parser;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Parser)]
@@ -9,28 +9,28 @@ pub struct UiOpts {
     #[clap(long, default_value_t = 600.0)]
     pub retention_period: f64,
 
-    #[clap(long, default_value = "total")]
-    pub tab: Vec<String>,
+    #[clap(long, default_value = "total=.*:.*")]
+    pub tab: Vec<Tab>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Tab {
-    Total,
-    Channel(String),
-    Client(String),
-    Bundle(String),
-    Connection(String),
+#[derive(Debug, Clone)]
+pub struct Tab {
+    name: String,
+    key_regex: regex::Regex,
+    value_regex: regex::Regex,
+}
+
+impl Tab {
+    pub fn is_match(&self, stats: &Stats) -> bool {
+        stats
+            .iter()
+            .any(|(k, v)| self.key_regex.is_match(k) && self.value_regex.is_match(&v.to_string()))
+    }
 }
 
 impl std::fmt::Display for Tab {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::Total => write!(f, "total"),
-            Self::Channel(v) => write!(f, "channel:{v}"),
-            Self::Client(v) => write!(f, "client:{v}"),
-            Self::Bundle(v) => write!(f, "bundle:{v}"),
-            Self::Connection(v) => write!(f, "connection:{v}"),
-        }
+        write!(f, "{}={}:{}", self.name, self.key_regex, self.value_regex)
     }
 }
 
@@ -38,19 +38,18 @@ impl std::str::FromStr for Tab {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "total" {
-            Ok(Self::Total)
-        } else if s.starts_with("channel:") {
-            Ok(Self::Channel(s["channel:".len()..].to_owned()))
-        } else if s.starts_with("client:") {
-            Ok(Self::Client(s["client:".len()..].to_owned()))
-        } else if s.starts_with("bundle:") {
-            Ok(Self::Bundle(s["bundle:".len()..].to_owned()))
-        } else if s.starts_with("connection:") {
-            Ok(Self::Connection(s["connection:".len()..].to_owned()))
-        } else {
-            anyhow::bail!("invalid tab name {s:?}");
+        if let [name, rest] = s.splitn(2, '=').collect::<Vec<_>>().as_slice() {
+            if let [k, v] = rest.splitn(2, ':').collect::<Vec<_>>().as_slice() {
+                return Ok(Self {
+                    name: name.to_string(),
+                    key_regex: regex::Regex::new(k)?,
+                    value_regex: regex::Regex::new(v)?,
+                });
+            }
         }
+        anyhow::bail!(
+            "invalid tab spec {s:?} (expected format: \"$NAME=$KEY_REGEX:$VALUE_REGEX\")"
+        );
     }
 }
 
@@ -63,10 +62,160 @@ type Frame<'a> = tui::Frame<'a, tui::backend::CrosstermBackend<std::io::Stdout>>
 pub struct Ui {
     opt: UiOpts,
     history: VecDeque<HistoryItem>,
+    tab_index: usize,
+    table_state: tui::widgets::TableState,
 }
 
 impl Ui {
-    fn draw(&mut self, f: &mut Frame) {}
+    fn new(opt: UiOpts) -> Self {
+        Self {
+            opt,
+            history: VecDeque::new(),
+            tab_index: 0,
+            table_state: Default::default(),
+        }
+    }
+
+    fn draw(&mut self, f: &mut Frame) {
+        use tui::layout::{Constraint, Direction, Layout};
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(1)
+            .constraints(
+                [
+                    Constraint::Length(3),
+                    Constraint::Min(0),
+                    Constraint::Length(5),
+                ]
+                .as_ref(),
+            )
+            .split(f.size());
+
+        self.draw_tabs(f, chunks[0]);
+        self.draw_stats(f, chunks[1], self.opt.tab[self.tab_index].clone());
+        self.draw_help(f, chunks[2]);
+    }
+
+    fn draw_stats(&mut self, f: &mut Frame, area: tui::layout::Rect, tab: Tab) {
+        use tui::layout::{Constraint, Direction, Layout};
+
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+            .split(area);
+
+        self.draw_aggregated_stats(f, chunks[0], &tab);
+        self.draw_detailed_stats(f, chunks[1], &tab);
+    }
+
+    fn latest_stats(&self, tab: &Tab) -> Vec<StatsItem> {
+        let mut items = BTreeMap::<_, StatsItem>::new();
+        for conn in &self.history.back().expect("unreachable").connections {
+            if tab.is_match(&conn.stats) {
+                for (k, v) in &conn.stats {
+                    let entry = items.entry(k).or_default();
+                    entry.key = k.clone();
+                    entry.values.insert(v.clone());
+                }
+            }
+        }
+        items.into_iter().map(|(_, v)| v).collect()
+    }
+
+    fn draw_aggregated_stats(&mut self, f: &mut Frame, area: tui::layout::Rect, tab: &Tab) {
+        use tui::layout::Constraint;
+        use tui::style::{Color, Modifier, Style};
+        use tui::widgets::{Block, Borders, Cell, Row, Table};
+
+        let selected_style = Style::default().add_modifier(Modifier::REVERSED);
+        let normal_style = Style::default().bg(Color::Blue);
+
+        let header_cells = ["Key", "Sum", "Uniq"]
+            .into_iter()
+            .map(|h| Cell::from(h).style(Style::default().fg(Color::Red)));
+        let header = Row::new(header_cells)
+            .style(normal_style)
+            .height(1)
+            .bottom_margin(1);
+
+        let items = self.latest_stats(tab);
+        let rows = items.into_iter().map(|item| {
+            let cells = match item.aggregated_value() {
+                Ok(sum) => {
+                    vec![
+                        Cell::from(item.key),
+                        Cell::from(sum.to_string()),
+                        Cell::from(""),
+                    ]
+                }
+                Err(uniq) => {
+                    vec![
+                        Cell::from(item.key),
+                        Cell::from(""),
+                        Cell::from(uniq.to_string()),
+                    ]
+                }
+            };
+            Row::new(cells)
+        });
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title("Aggregated Stats"); // TODO: N connections
+
+        // TODO: align
+        let t = Table::new(rows)
+            .header(header)
+            .block(block)
+            .highlight_style(selected_style)
+            .highlight_symbol(">> ")
+            .widths(&[
+                Constraint::Percentage(70),
+                Constraint::Percentage(15),
+                Constraint::Percentage(15),
+            ]);
+        f.render_stateful_widget(t, area, &mut self.table_state);
+    }
+
+    fn draw_detailed_stats(&mut self, f: &mut Frame, area: tui::layout::Rect, tab: &Tab) {
+        use tui::widgets::{Block, Borders};
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title("Detailed Stats");
+        f.render_widget(block, area);
+    }
+
+    fn draw_tabs(&mut self, f: &mut Frame, area: tui::layout::Rect) {
+        use tui::style::{Color, Modifier, Style};
+        use tui::text::Spans;
+        use tui::widgets::{Block, Borders, Tabs};
+
+        let tabs = Tabs::new(
+            self.opt
+                .tab
+                .iter()
+                .map(|t| Spans::from(t.name.clone()))
+                .collect::<Vec<_>>(),
+        )
+        .select(self.tab_index)
+        .block(Block::default().borders(Borders::ALL).title("Tab"))
+        .style(Style::default().fg(Color::Cyan))
+        .highlight_style(
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .bg(Color::Black),
+        );
+        f.render_widget(tabs, area);
+    }
+
+    fn draw_help(&mut self, f: &mut Frame, area: tui::layout::Rect) {
+        use tui::widgets::{Block, Borders};
+
+        let block = Block::default().borders(Borders::ALL).title("Help");
+        f.render_widget(block, area);
+    }
 }
 
 pub struct App {
@@ -81,10 +230,7 @@ impl App {
         log::debug!("setup terminal");
         Ok(Self {
             rx,
-            ui: Ui {
-                opt,
-                history: VecDeque::new(),
-            },
+            ui: Ui::new(opt),
             terminal,
         })
     }
@@ -94,35 +240,54 @@ impl App {
             if self.handle_key_event()? {
                 break;
             }
-            if self.handle_stats_poll()? {
-                self.terminal.draw(|f| self.ui.draw(f))?;
-            }
+            self.handle_stats_poll()?;
         }
         Ok(())
     }
 
     fn handle_key_event(&mut self) -> anyhow::Result<bool> {
         if crossterm::event::poll(std::time::Duration::from_secs(0))? {
+            // TODO: handle resize event
             if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
                 use crossterm::event::KeyCode;
                 match key.code {
                     KeyCode::Char('q') => {
                         return Ok(true);
                     }
-                    // KeyCode::Up => {
-                    //     if let Some(i) = app.top_state.selected() {
-                    //         app.top_state.select(Some(i.saturating_sub(1)));
-                    //     } else {
-                    //         app.top_state.select(Some(0));
-                    //     }
-                    // }
-                    // KeyCode::Down => {
-                    //     if let Some(i) = app.top_state.selected() {
-                    //         app.top_state.select(Some(i + 1)); // TODO:
-                    //     } else {
-                    //         app.top_state.select(Some(0));
-                    //     }
-                    // }
+                    KeyCode::Right => {
+                        let tab_index =
+                            std::cmp::min(self.ui.tab_index + 1, self.ui.opt.tab.len() - 1);
+                        if tab_index != self.ui.tab_index {
+                            self.ui.tab_index = tab_index;
+                            self.terminal.draw(|f| self.ui.draw(f))?;
+                        }
+                    }
+                    KeyCode::Left => {
+                        let tab_index = self.ui.tab_index.saturating_sub(1);
+                        if tab_index != self.ui.tab_index {
+                            self.ui.tab_index = tab_index;
+                            self.terminal.draw(|f| self.ui.draw(f))?;
+                        }
+                    }
+                    KeyCode::Up => {
+                        let i = if let Some(i) = self.ui.table_state.selected() {
+                            i.saturating_sub(1)
+                        } else {
+                            0
+                        };
+                        self.ui.table_state.select(Some(i));
+                        self.terminal.draw(|f| self.ui.draw(f))?;
+                    }
+                    KeyCode::Down => {
+                        let i = if let Some(i) = self.ui.table_state.selected() {
+                            // TODO: min
+                            i + 1
+                        } else {
+                            0
+                        };
+                        self.ui.table_state.select(Some(i));
+                        self.terminal.draw(|f| self.ui.draw(f))?;
+                    }
                     _ => {}
                 }
             }
@@ -130,7 +295,7 @@ impl App {
         Ok(false)
     }
 
-    fn handle_stats_poll(&mut self) -> anyhow::Result<bool> {
+    fn handle_stats_poll(&mut self) -> anyhow::Result<()> {
         match self.rx.recv_timeout(Duration::from_millis(10)) {
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 anyhow::bail!("Sora stats polling thread terminated unexpectedly");
@@ -149,10 +314,10 @@ impl App {
                     }
                     log::debug!("remove old stats");
                 }
-                return Ok(true);
+                self.terminal.draw(|f| self.ui.draw(f))?;
             }
         }
-        Ok(false)
+        Ok(())
     }
 
     fn setup_terminal() -> anyhow::Result<Terminal> {
@@ -194,4 +359,24 @@ impl Drop for App {
 pub struct HistoryItem {
     timestamp: Instant,
     connections: Vec<ConnectionStats>,
+}
+
+#[derive(Debug, Default)]
+pub struct StatsItem {
+    key: String,
+    values: HashSet<StatsValue>,
+}
+
+impl StatsItem {
+    pub fn aggregated_value(&self) -> Result<f64, usize> {
+        let mut sum = 0.0;
+        for v in &self.values {
+            if let StatsValue::Number(v) = v {
+                sum += v.0;
+            } else {
+                return Err(self.values.len());
+            }
+        }
+        Ok(sum)
+    }
 }
