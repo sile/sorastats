@@ -11,9 +11,6 @@ pub struct StatsPollingOptions {
 
     #[clap(long, default_value_t = 5.0)]
     pub polling_interval: f64,
-
-    #[clap(long, default_value_t = 600.0)]
-    pub retention_period: f64,
 }
 
 impl StatsPollingOptions {
@@ -50,14 +47,21 @@ struct StatsPoller {
 impl StatsPoller {
     pub fn run(mut self) {
         loop {
-            if let Err(e) = self.run_once() {
-                log::error!("failed to poll Sora stats: {}", e);
-                break;
+            match self.run_once() {
+                Err(e) => {
+                    log::error!("failed to poll Sora stats: {}", e);
+                    break;
+                }
+                Ok(false) => {
+                    log::debug!("stop polling as the main thread has finished");
+                    break;
+                }
+                Ok(true) => {}
             }
         }
     }
 
-    fn run_once(&mut self) -> anyhow::Result<()> {
+    fn run_once(&mut self) -> anyhow::Result<bool> {
         if let Some(duration) = self
             .opt
             .polling_interval()
@@ -65,11 +69,10 @@ impl StatsPoller {
         {
             std::thread::sleep(duration);
         }
-        self.poll_once()?;
-        Ok(())
+        self.poll_once()
     }
 
-    fn poll_once(&mut self) -> anyhow::Result<()> {
+    fn poll_once(&mut self) -> anyhow::Result<bool> {
         self.last_request_time = Instant::now();
         let values: Vec<serde_json::Value> = ureq::post(&self.opt.sora_url)
             .set(SORA_API_HEADER_NAME, SORA_API_HEADER_VALUE)
@@ -88,6 +91,6 @@ impl StatsPoller {
         for value in values {
             connections.push(ConnectionStats::from_json(value)?);
         }
-        Ok(())
+        Ok(self.tx.send(connections).is_ok())
     }
 }

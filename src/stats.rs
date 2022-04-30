@@ -11,12 +11,19 @@ pub enum StatsKey {
     Connection(String),
 }
 
-pub type StatsMap = BTreeMap<StatsKey, Stats>;
+// pub type StatsMap = BTreeMap<StatsKey, Stats>;
 
 pub type Counters = BTreeMap<String, u64>;
 
+pub type Stats = BTreeMap<String, StatsValue>;
+
 #[derive(Debug, Clone)]
-pub struct Stats {}
+pub enum StatsValue {
+    Counter(u64),
+    Number(serde_json::value::Number),
+    Bool(bool),
+    String(String),
+}
 
 #[derive(Debug, Clone)]
 pub struct ConnectionStats {
@@ -25,7 +32,7 @@ pub struct ConnectionStats {
     pub client_id: String,
     pub bundle_id: String,
     pub connection_id: String,
-    pub counters: Counters,
+    pub stats: Stats,
 }
 
 impl ConnectionStats {
@@ -44,30 +51,25 @@ impl ConnectionStats {
             .unwrap_or_else(|| connection_id.clone());
 
         let mut key = String::new();
-        let mut counters = Counters::new();
-        collect_positive_counters(obj, &mut counters, &mut key);
+        let mut stats = Stats::new();
+        collect_stats(obj, &mut stats, &mut key);
         Ok(Self {
             timestamp,
             channel_id,
             client_id,
             connection_id,
             bundle_id,
-            counters,
+            stats,
         })
     }
 }
 
-fn collect_positive_counters(
+fn collect_stats(
     obj: &serde_json::Map<String, serde_json::Value>,
-    counters: &mut Counters,
+    stats: &mut Stats,
     key: &mut String,
 ) {
     for (k, v) in obj {
-        if k == "unstable_level" {
-            // Not a counter.
-            continue;
-        }
-
         let old_len = key.len();
         if !key.is_empty() {
             key.push('.');
@@ -75,17 +77,29 @@ fn collect_positive_counters(
         key.push_str(k);
         match v {
             serde_json::Value::Number(v) => {
-                if let Some(v) = v.as_u64() {
+                if k == "unstable_level" {
+                } else if let Some(v) = v.as_u64() {
                     if v > 0 {
-                        counters.insert(key.clone(), v);
+                        stats.insert(key.clone(), StatsValue::Counter(v));
                     }
                 }
+                if !stats.contains_key(key) {
+                    stats.insert(key.clone(), StatsValue::Number(v.clone()));
+                }
+            }
+            serde_json::Value::Bool(v) => {
+                stats.insert(key.clone(), StatsValue::Bool(*v));
+            }
+            serde_json::Value::String(v) => {
+                stats.insert(key.clone(), StatsValue::String(v.clone()));
             }
             serde_json::Value::Object(children) => {
-                collect_positive_counters(children, counters, key);
+                collect_stats(children, stats, key);
             }
-            _ => {}
-        }
+            _ => {
+                log::warn!("unexpected stats value (ignored): {v}");
+            }
+        };
         key.truncate(old_len);
     }
 }

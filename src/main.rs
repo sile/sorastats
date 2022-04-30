@@ -17,6 +17,9 @@ struct Args {
 
     #[clap(long)]
     truncate_log: bool,
+
+    #[clap(long, default_value_t = 600.0)]
+    pub retention_period: f64,
 }
 
 fn main() -> anyhow::Result<()> {
