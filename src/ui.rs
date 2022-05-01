@@ -1,5 +1,5 @@
 use crate::poller::StatsReceiver;
-use crate::stats::{ConnectionStats, Stats, StatsValue};
+use crate::stats::{ConnectionStats, StatsValue};
 use clap::Parser;
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
@@ -15,6 +15,29 @@ pub struct UiOpts {
 
     #[clap(long, short = 'k', default_value = ".*")]
     pub stats_key_filter: regex::Regex,
+}
+
+impl UiOpts {
+    // TODO: rename (apply_filter)
+    fn filter_connections(&self, connections: Vec<ConnectionStats>) -> Vec<ConnectionStats> {
+        connections
+            .into_iter()
+            .filter(|c| {
+                c.stats
+                    .iter()
+                    .any(|(k, v)| self.connection_filter.is_match(&format!("{}:{}", k, v)))
+            })
+            .map(|mut c| {
+                let stats = c
+                    .stats
+                    .into_iter()
+                    .filter(|(k, _v)| self.stats_key_filter.is_match(k))
+                    .collect();
+                c.stats = stats;
+                c
+            })
+            .collect()
+    }
 }
 
 type Terminal = tui::Terminal<tui::backend::CrosstermBackend<std::io::Stdout>>;
@@ -415,7 +438,7 @@ impl App {
                 log::debug!("recv new stats");
                 self.ui.history.push_back(HistoryItem {
                     timestamp: Instant::now(),
-                    connections,
+                    connections: self.ui.opt.filter_connections(connections),
                 });
                 while let Some(item) = self.ui.history.pop_front() {
                     if item.timestamp.elapsed().as_secs_f64() < self.ui.opt.retention_period {
