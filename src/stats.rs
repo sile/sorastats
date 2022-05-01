@@ -9,6 +9,24 @@ pub struct ConnectionStatsValue {
     pub delta_per_sec: Option<f64>,
 }
 
+impl ConnectionStatsValue {
+    pub fn format_value(&self) -> String {
+        if let StatsValue::Number(v) = self.value {
+            format_u64(v.0 as u64)
+        } else {
+            self.value.to_string()
+        }
+    }
+
+    pub fn format_delta_per_sec(&self) -> String {
+        if let Some(v) = self.delta_per_sec {
+            format_u64(v.round() as u64)
+        } else {
+            String::new()
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AggregatedStatsValue {
     pub value_sum: Option<f64>, // TODO: u64

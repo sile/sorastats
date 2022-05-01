@@ -137,26 +137,27 @@ impl Ui {
         Vec::new()
     }
 
-    fn selected_item_values(&self, selected: &str) -> Vec<(String, String)> {
-        let mut items = Vec::new();
-        for conn in self
-            .history
-            .back()
-            .expect("unreachable")
-            .stats
-            .connections
-            .values()
-        {
-            for (k, v) in &conn.stats {
-                if k == selected {
-                    items.push((conn.connection_id.clone(), v.value.to_string()));
-                    break;
-                }
-            }
-        }
-        // TODO: sort
-        items
-    }
+    // TODO: delete
+    // fn selected_item_values(&self, selected: &str) -> Vec<(String, String)> {
+    //     let mut items = Vec::new();
+    //     for conn in self
+    //         .history
+    //         .back()
+    //         .expect("unreachable")
+    //         .stats
+    //         .connections
+    //         .values()
+    //     {
+    //         for (k, v) in &conn.stats {
+    //             if k == selected {
+    //                 items.push((conn.connection_id.clone(), v.value.to_string()));
+    //                 break;
+    //             }
+    //         }
+    //     }
+    //     // TODO: sort
+    //     items
+    // }
 
     fn draw_aggregated_stats(&mut self, f: &mut Frame, area: tui::layout::Rect) {
         use tui::layout::Constraint;
@@ -212,7 +213,6 @@ impl Ui {
             width = (self.latest_stats().item_count()).to_string().len()
         );
 
-        // TODO: align
         let t = Table::new(rows)
             .header(header)
             .block(self.make_block("Aggregated Stats"))
@@ -222,6 +222,7 @@ impl Ui {
         f.render_stateful_widget(t, area, &mut self.table_state);
     }
 
+    // TODO: rename
     fn draw_detailed_stats(&mut self, f: &mut Frame, area: tui::layout::Rect) {
         use tui::layout::{Constraint, Direction, Layout};
         use tui::widgets::{Block, Borders};
@@ -332,37 +333,68 @@ impl Ui {
         use tui::style::{Modifier, Style};
         use tui::widgets::{Block, Borders, Cell, Row, Table};
 
-        let items = self.selected_item_values(selected);
+        let mut rows = Vec::new();
+        let mut value_width = 0;
+        let mut delta_width = 0;
+        let mut is_value_num = true;
+        for conn in self.latest_stats().connections.values() {
+            if let Some((_, item)) = conn.stats.iter().find(|(k, _)| *k == selected) {
+                let value = item.format_value();
+                let delta = item.format_delta_per_sec();
+                is_value_num &= item.value.as_f64().is_some();
+                value_width = std::cmp::max(value_width, value.len());
+                delta_width = std::cmp::max(delta_width, delta.len());
+                rows.push((conn.connection_id.clone(), value, delta));
+            }
+        }
+
+        let rows = rows.into_iter().map(|(connection_id, value, delta)| {
+            if is_value_num {
+                Row::new(vec![
+                    Cell::from(connection_id),
+                    Cell::from(format!("{:>value_width$}", value)),
+                    Cell::from(format!("{:>delta_width$}", delta)),
+                ])
+            } else {
+                Row::new(vec![Cell::from(connection_id), Cell::from(value)])
+            }
+        });
 
         let selected_style = Style::default().add_modifier(Modifier::REVERSED);
         let normal_style = Style::default();
 
-        let header_cells = ["Connection ID", "Value"]
-            .into_iter()
-            .map(|h| Cell::from(h).style(Style::default().add_modifier(Modifier::BOLD)));
+        let header_cells = if is_value_num {
+            &["Connection ID", "Value", "Delta/s"][..]
+        } else {
+            &["Connection ID", "Value"][..]
+        }
+        .into_iter()
+        .map(|&h| Cell::from(h).style(Style::default().add_modifier(Modifier::BOLD)));
         let header = Row::new(header_cells)
             .style(normal_style)
             .height(1)
             .bottom_margin(1);
 
-        let rows = items.into_iter().map(|(connection_id, value)| {
-            Row::new(vec![Cell::from(connection_id), Cell::from(value)])
-        });
-
         let block = Block::default()
             .borders(Borders::ALL)
             .title(format!("Values of {:?}", selected));
 
-        // TODO: align
+        let widths = if is_value_num {
+            vec![
+                Constraint::Percentage(50),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+            ]
+        } else {
+            vec![Constraint::Percentage(50), Constraint::Percentage(50)]
+        };
+
         let t = Table::new(rows)
             .header(header)
             .block(block)
             .highlight_style(selected_style)
             .highlight_symbol(">> ")
-            .widths(&[
-                Constraint::Percentage(50), // TODO: length
-                Constraint::Percentage(50),
-            ]);
+            .widths(&widths);
         let mut state = Default::default(); // TODO
         f.render_stateful_widget(t, area, &mut state);
     }
