@@ -6,51 +6,15 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug, Parser)]
 pub struct UiOpts {
+    // TODO: rename
     #[clap(long, default_value_t = 600.0)]
     pub retention_period: f64,
 
-    #[clap(long, default_value = "total=.*:.*")]
-    pub tab: Vec<Tab>,
-}
+    #[clap(long, short, default_value = ".*")]
+    pub connection_filter: regex::Regex,
 
-#[derive(Debug, Clone)]
-pub struct Tab {
-    name: String,
-    key_regex: regex::Regex,
-    value_regex: regex::Regex,
-}
-
-impl Tab {
-    pub fn is_match(&self, stats: &Stats) -> bool {
-        stats
-            .iter()
-            .any(|(k, v)| self.key_regex.is_match(k) && self.value_regex.is_match(&v.to_string()))
-    }
-}
-
-impl std::fmt::Display for Tab {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}={}:{}", self.name, self.key_regex, self.value_regex)
-    }
-}
-
-impl std::str::FromStr for Tab {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let [name, rest] = s.splitn(2, '=').collect::<Vec<_>>().as_slice() {
-            if let [k, v] = rest.splitn(2, ':').collect::<Vec<_>>().as_slice() {
-                return Ok(Self {
-                    name: name.to_string(),
-                    key_regex: regex::Regex::new(k)?,
-                    value_regex: regex::Regex::new(v)?,
-                });
-            }
-        }
-        anyhow::bail!(
-            "invalid tab spec {s:?} (expected format: \"$NAME=$KEY_REGEX:$VALUE_REGEX\")"
-        );
-    }
+    #[clap(long, short = 'k', default_value = ".*")]
+    pub stats_key_filter: regex::Regex,
 }
 
 type Terminal = tui::Terminal<tui::backend::CrosstermBackend<std::io::Stdout>>;
@@ -62,7 +26,6 @@ type Frame<'a> = tui::Frame<'a, tui::backend::CrosstermBackend<std::io::Stdout>>
 pub struct Ui {
     opt: UiOpts,
     history: VecDeque<HistoryItem>,
-    tab_index: usize,
     table_state: tui::widgets::TableState,
 }
 
@@ -71,7 +34,6 @@ impl Ui {
         Self {
             opt,
             history: VecDeque::new(),
-            tab_index: 0,
             table_state: Default::default(),
         }
     }
@@ -82,22 +44,14 @@ impl Ui {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
-            .constraints(
-                [
-                    Constraint::Length(3),
-                    Constraint::Min(0),
-                    Constraint::Length(5),
-                ]
-                .as_ref(),
-            )
+            .constraints([Constraint::Min(0), Constraint::Length(5)].as_ref())
             .split(f.size());
 
-        self.draw_tabs(f, chunks[0]); // TODO: remove tabs
-        self.draw_stats(f, chunks[1], self.opt.tab[self.tab_index].clone());
-        self.draw_help(f, chunks[2]);
+        self.draw_stats(f, chunks[0]);
+        self.draw_help(f, chunks[1]);
     }
 
-    fn draw_stats(&mut self, f: &mut Frame, area: tui::layout::Rect, tab: Tab) {
+    fn draw_stats(&mut self, f: &mut Frame, area: tui::layout::Rect) {
         use tui::layout::{Constraint, Direction, Layout};
 
         let chunks = Layout::default()
@@ -105,24 +59,22 @@ impl Ui {
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
             .split(area);
 
-        self.draw_aggregated_stats(f, chunks[0], &tab);
-        self.draw_detailed_stats(f, chunks[1], &tab);
+        self.draw_aggregated_stats(f, chunks[0]);
+        self.draw_detailed_stats(f, chunks[1]);
     }
 
-    fn selected_item_chart(&self, selected: &StatsItem, tab: &Tab) -> Vec<(f64, f64)> {
+    fn selected_item_chart(&self, selected: &StatsItem) -> Vec<(f64, f64)> {
         let mut items = Vec::new();
         let start = self.history[0].timestamp; // TODO
         for history_item in &self.history {
             let x = (history_item.timestamp - start).as_secs_f64();
             let mut y = 0.0;
             for conn in &self.history.back().expect("unreachable").connections {
-                if tab.is_match(&conn.stats) {
-                    for (k, v) in &conn.stats {
-                        if let StatsValue::Number(v) = v {
-                            if *k == selected.key {
-                                y += v.0;
-                                break;
-                            }
+                for (k, v) in &conn.stats {
+                    if let StatsValue::Number(v) = v {
+                        if *k == selected.key {
+                            y += v.0;
+                            break;
                         }
                     }
                 }
@@ -132,16 +84,14 @@ impl Ui {
         items // TODO: use delta instead of sum
     }
 
-    fn selected_item_values(&self, selected: &StatsItem, tab: &Tab) -> Vec<(String, String)> {
+    fn selected_item_values(&self, selected: &StatsItem) -> Vec<(String, String)> {
         let mut items = Vec::new();
         for conn in &self.history.back().expect("unreachable").connections {
-            if tab.is_match(&conn.stats) {
-                for (k, v) in &conn.stats {
-                    if *k == selected.key {
-                        let connection_id = conn.stats["connection_id"].to_string(); // TODO
-                        items.push((connection_id, v.to_string()));
-                        break;
-                    }
+            for (k, v) in &conn.stats {
+                if *k == selected.key {
+                    let connection_id = conn.stats["connection_id"].to_string(); // TODO
+                    items.push((connection_id, v.to_string()));
+                    break;
                 }
             }
         }
@@ -149,21 +99,19 @@ impl Ui {
         items
     }
 
-    fn latest_stats(&self, tab: &Tab) -> Vec<StatsItem> {
+    fn latest_stats(&self) -> Vec<StatsItem> {
         let mut items = BTreeMap::<_, StatsItem>::new();
         for conn in &self.history.back().expect("unreachable").connections {
-            if tab.is_match(&conn.stats) {
-                for (k, v) in &conn.stats {
-                    let entry = items.entry(k).or_default();
-                    entry.key = k.clone();
-                    entry.values.insert(v.clone());
-                }
+            for (k, v) in &conn.stats {
+                let entry = items.entry(k).or_default();
+                entry.key = k.clone();
+                entry.values.insert(v.clone());
             }
         }
         items.into_iter().map(|(_, v)| v).collect()
     }
 
-    fn draw_aggregated_stats(&mut self, f: &mut Frame, area: tui::layout::Rect, tab: &Tab) {
+    fn draw_aggregated_stats(&mut self, f: &mut Frame, area: tui::layout::Rect) {
         use tui::layout::Constraint;
         use tui::style::{Color, Modifier, Style};
         use tui::widgets::{Block, Borders, Cell, Row, Table};
@@ -179,7 +127,7 @@ impl Ui {
             .height(1)
             .bottom_margin(1);
 
-        let items = self.latest_stats(tab);
+        let items = self.latest_stats();
         let rows = items.into_iter().map(|item| {
             let cells = match item.aggregated_value() {
                 Ok(sum) => {
@@ -220,7 +168,7 @@ impl Ui {
         f.render_stateful_widget(t, area, &mut self.table_state);
     }
 
-    fn draw_detailed_stats(&mut self, f: &mut Frame, area: tui::layout::Rect, tab: &Tab) {
+    fn draw_detailed_stats(&mut self, f: &mut Frame, area: tui::layout::Rect) {
         use tui::layout::{Constraint, Direction, Layout};
         use tui::widgets::{Block, Borders};
 
@@ -230,11 +178,11 @@ impl Ui {
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
                 .split(area);
 
-            let stats = self.latest_stats(tab);
+            let stats = self.latest_stats();
             let selected = &stats[i]; // TODO: range check
-            self.draw_selected_stats(f, chunks[0], selected, tab);
+            self.draw_selected_stats(f, chunks[0], selected);
             if selected.is_number() {
-                self.draw_chart(f, chunks[1], selected, tab);
+                self.draw_chart(f, chunks[1], selected);
             } else {
             }
         } else {
@@ -245,19 +193,13 @@ impl Ui {
         }
     }
 
-    fn draw_chart(
-        &mut self,
-        f: &mut Frame,
-        area: tui::layout::Rect,
-        selected: &StatsItem,
-        tab: &Tab,
-    ) {
+    fn draw_chart(&mut self, f: &mut Frame, area: tui::layout::Rect, selected: &StatsItem) {
         use tui::style::{Color, Modifier, Style};
         use tui::symbols::Marker;
         use tui::text::Span;
         use tui::widgets::{Axis, Block, Borders, Chart, Dataset, GraphType};
 
-        let items = self.selected_item_chart(selected, tab);
+        let items = self.selected_item_chart(selected);
 
         // TODO: add average
         let datasets = vec![Dataset::default()
@@ -328,13 +270,12 @@ impl Ui {
         f: &mut Frame,
         area: tui::layout::Rect,
         selected: &StatsItem,
-        tab: &Tab,
     ) {
         use tui::layout::Constraint;
         use tui::style::{Color, Modifier, Style};
         use tui::widgets::{Block, Borders, Cell, Row, Table};
 
-        let items = self.selected_item_values(selected, tab);
+        let items = self.selected_item_values(selected);
 
         let selected_style = Style::default().add_modifier(Modifier::REVERSED);
         let normal_style = Style::default().bg(Color::Blue);
@@ -367,29 +308,6 @@ impl Ui {
             ]);
         let mut state = Default::default(); // TODO
         f.render_stateful_widget(t, area, &mut state);
-    }
-
-    fn draw_tabs(&mut self, f: &mut Frame, area: tui::layout::Rect) {
-        use tui::style::{Color, Modifier, Style};
-        use tui::text::Spans;
-        use tui::widgets::{Block, Borders, Tabs};
-
-        let tabs = Tabs::new(
-            self.opt
-                .tab
-                .iter()
-                .map(|t| Spans::from(t.name.clone()))
-                .collect::<Vec<_>>(),
-        )
-        .select(self.tab_index)
-        .block(Block::default().borders(Borders::ALL).title("Tab"))
-        .style(Style::default().fg(Color::Cyan))
-        .highlight_style(
-            Style::default()
-                .add_modifier(Modifier::BOLD)
-                .bg(Color::Black),
-        );
-        f.render_widget(tabs, area);
     }
 
     // TODO: rename
@@ -446,21 +364,21 @@ impl App {
                     KeyCode::Char('q') => {
                         return Ok(true);
                     }
-                    KeyCode::Right => {
-                        let tab_index =
-                            std::cmp::min(self.ui.tab_index + 1, self.ui.opt.tab.len() - 1);
-                        if tab_index != self.ui.tab_index {
-                            self.ui.tab_index = tab_index;
-                            self.terminal.draw(|f| self.ui.draw(f))?;
-                        }
-                    }
-                    KeyCode::Left => {
-                        let tab_index = self.ui.tab_index.saturating_sub(1);
-                        if tab_index != self.ui.tab_index {
-                            self.ui.tab_index = tab_index;
-                            self.terminal.draw(|f| self.ui.draw(f))?;
-                        }
-                    }
+                    // KeyCode::Right => {
+                    //     let tab_index =
+                    //         std::cmp::min(self.ui.tab_index + 1, self.ui.opt.tab.len() - 1);
+                    //     if tab_index != self.ui.tab_index {
+                    //         self.ui.tab_index = tab_index;
+                    //         self.terminal.draw(|f| self.ui.draw(f))?;
+                    //     }
+                    // }
+                    // KeyCode::Left => {
+                    //     let tab_index = self.ui.tab_index.saturating_sub(1);
+                    //     if tab_index != self.ui.tab_index {
+                    //         self.ui.tab_index = tab_index;
+                    //         self.terminal.draw(|f| self.ui.draw(f))?;
+                    //     }
+                    // }
                     KeyCode::Up => {
                         let i = if let Some(i) = self.ui.table_state.selected() {
                             i.saturating_sub(1)

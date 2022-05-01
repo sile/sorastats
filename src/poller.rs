@@ -7,15 +7,15 @@ const SORA_API_HEADER_VALUE: &'static str = "Sora_20171101.GetStatsAllConnection
 
 #[derive(Debug, Clone, clap::Parser)]
 pub struct StatsPollingOptions {
-    pub sora_url: String,
+    pub sora_api_url: String,
 
     #[clap(long, default_value_t = 1.0)]
-    pub polling_interval: f64,
+    pub interval: f64,
 }
 
 impl StatsPollingOptions {
     fn polling_interval(&self) -> Duration {
-        Duration::from_secs_f64(self.polling_interval)
+        Duration::from_secs_f64(self.interval)
     }
 }
 
@@ -74,13 +74,13 @@ impl StatsPoller {
 
     fn poll_once(&mut self) -> anyhow::Result<bool> {
         self.last_request_time = Instant::now();
-        let values: Vec<serde_json::Value> = ureq::post(&self.opt.sora_url)
+        let values: Vec<serde_json::Value> = ureq::post(&self.opt.sora_api_url)
             .set(SORA_API_HEADER_NAME, SORA_API_HEADER_VALUE)
             .call()?
             .into_json()?;
         log::debug!(
             "HTTP POST {} {}:{} (elapsed: {:?}, connections: {})",
-            self.opt.sora_url,
+            self.opt.sora_api_url,
             SORA_API_HEADER_NAME,
             SORA_API_HEADER_VALUE,
             self.last_request_time.elapsed(),
