@@ -1,5 +1,6 @@
 use crate::poller::StatsReceiver;
 use crate::stats::{ConnectionStats, StatsValue};
+use chrono::{DateTime, Local};
 use clap::Parser;
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
@@ -66,12 +67,47 @@ impl Ui {
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .margin(1)
-            .constraints([Constraint::Min(0), Constraint::Length(5)].as_ref())
+            .constraints([Constraint::Length(5), Constraint::Min(0)].as_ref())
             .split(f.size());
 
-        self.draw_stats(f, chunks[0]);
+        self.render_header(f, chunks[0]);
+        self.draw_stats(f, chunks[1]);
+    }
+
+    fn render_header(&mut self, f: &mut Frame, area: tui::layout::Rect) {
+        use tui::layout::{Constraint, Direction, Layout};
+
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+            .split(area);
+
+        self.render_status(f, chunks[0]);
         self.draw_help(f, chunks[1]);
+    }
+
+    fn render_status(&mut self, f: &mut Frame, area: tui::layout::Rect) {
+        use tui::layout::Alignment;
+        use tui::text::Spans;
+        use tui::widgets::{Block, Borders, Paragraph};
+
+        let item = self.history.back().expect("unreachable");
+        let block = Block::default().borders(Borders::ALL).title("Status");
+        let paragraph = Paragraph::new(vec![
+            Spans::from(format!(
+                "Update Time: {}",
+                item.time
+                    .to_rfc3339_opts(chrono::SecondsFormat::Millis, false)
+            )),
+            Spans::from(format!("Connections: {}", item.connections.len())),
+            Spans::from(format!(
+                "Stats Keys:  {}",
+                item.connections.get(0).map_or(0, |c| c.stats.len())
+            )),
+        ])
+        .block(block)
+        .alignment(Alignment::Left);
+        f.render_widget(paragraph, area);
     }
 
     fn draw_stats(&mut self, f: &mut Frame, area: tui::layout::Rect) {
@@ -171,11 +207,9 @@ impl Ui {
             Row::new(cells)
         });
 
-        let block = Block::default().borders(Borders::ALL).title(format!(
-            "Aggregated Stats: connections={}, updated={:?}",
-            self.history.back().expect("TODO").connections.len(),
-            std::time::SystemTime::now() // TODO: use the last polled timestamp
-        )); // TODO: N connections
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title("Aggregated Stats");
 
         // TODO: align
         let t = Table::new(rows)
@@ -341,9 +375,8 @@ impl Ui {
 
         let block = Block::default().borders(Borders::ALL).title("Help");
         let paragraph = Paragraph::new(vec![
-            Spans::from("Quit: 'q'"),
-            Spans::from("Move tabs: left arrow and right arrow"),
-            Spans::from("Move table cells: up arrow and down arrow"),
+            Spans::from("Quit: 'q' key"),
+            Spans::from("Move: UP / DOWN / LEFT / RIGHT keys"),
         ])
         .block(block)
         .alignment(Alignment::Left);
@@ -438,6 +471,7 @@ impl App {
                 log::debug!("recv new stats");
                 self.ui.history.push_back(HistoryItem {
                     timestamp: Instant::now(),
+                    time: Local::now(),
                     connections: self.ui.opt.filter_connections(connections),
                 });
                 while let Some(item) = self.ui.history.pop_front() {
@@ -491,6 +525,7 @@ impl Drop for App {
 #[derive(Debug)]
 pub struct HistoryItem {
     timestamp: Instant,
+    time: DateTime<Local>,
     connections: Vec<ConnectionStats>,
 }
 
