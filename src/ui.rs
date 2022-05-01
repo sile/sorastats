@@ -10,35 +10,6 @@ pub struct UiOpts {
     // TODO: rename
     #[clap(long, default_value_t = 600.0)]
     pub retention_period: f64,
-
-    #[clap(long, short, default_value = ".*")]
-    pub connection_filter: regex::Regex,
-
-    #[clap(long, short = 'k', default_value = ".*")]
-    pub stats_key_filter: regex::Regex,
-}
-
-impl UiOpts {
-    // TODO: rename (apply_filter)
-    fn filter_connections(&self, connections: Vec<ConnectionStats>) -> Vec<ConnectionStats> {
-        connections
-            .into_iter()
-            .filter(|c| {
-                c.stats
-                    .iter()
-                    .any(|(k, v)| self.connection_filter.is_match(&format!("{}:{}", k, v)))
-            })
-            .map(|mut c| {
-                let stats = c
-                    .stats
-                    .into_iter()
-                    .filter(|(k, _v)| self.stats_key_filter.is_match(k))
-                    .collect();
-                c.stats = stats;
-                c
-            })
-            .collect()
-    }
 }
 
 type Terminal = tui::Terminal<tui::backend::CrosstermBackend<std::io::Stdout>>;
@@ -71,7 +42,7 @@ impl Ui {
             .split(f.size());
 
         self.render_header(f, chunks[0]);
-        self.draw_stats(f, chunks[1]);
+        self.render_body(f, chunks[1]);
     }
 
     fn render_header(&mut self, f: &mut Frame, area: tui::layout::Rect) {
@@ -86,31 +57,46 @@ impl Ui {
         self.draw_help(f, chunks[1]);
     }
 
+    fn make_block(&self, name: &'static str) -> tui::widgets::Block<'static> {
+        use tui::style::{Modifier, Style};
+        use tui::text::Span;
+        use tui::widgets::{Block, Borders};
+
+        Block::default().borders(Borders::ALL).title(Span::styled(
+            name,
+            Style::default().add_modifier(Modifier::BOLD),
+        ))
+    }
+
     fn render_status(&mut self, f: &mut Frame, area: tui::layout::Rect) {
         use tui::layout::Alignment;
         use tui::text::Spans;
-        use tui::widgets::{Block, Borders, Paragraph};
+        use tui::widgets::Paragraph;
 
         let item = self.history.back().expect("unreachable");
-        let block = Block::default().borders(Borders::ALL).title("Status");
         let paragraph = Paragraph::new(vec![
             Spans::from(format!(
                 "Update Time: {}",
                 item.time
                     .to_rfc3339_opts(chrono::SecondsFormat::Millis, false)
             )),
-            Spans::from(format!("Connections: {}", item.connections.len())),
             Spans::from(format!(
-                "Stats Keys:  {}",
-                item.connections.get(0).map_or(0, |c| c.stats.len())
+                "Connections: {:5} (filter={})",
+                item.connections.len(),
+                "TODO" // self.opt.connection_filter
+            )),
+            Spans::from(format!(
+                "Stats  Keys: {:5} (filter={})",
+                item.connections.get(0).map_or(0, |c| c.stats.len()),
+                "TODO" //self.opt.stats_key_filter
             )),
         ])
-        .block(block)
+        .block(self.make_block("Status"))
         .alignment(Alignment::Left);
         f.render_widget(paragraph, area);
     }
 
-    fn draw_stats(&mut self, f: &mut Frame, area: tui::layout::Rect) {
+    fn render_body(&mut self, f: &mut Frame, area: tui::layout::Rect) {
         use tui::layout::{Constraint, Direction, Layout};
 
         let chunks = Layout::default()
@@ -173,7 +159,7 @@ impl Ui {
     fn draw_aggregated_stats(&mut self, f: &mut Frame, area: tui::layout::Rect) {
         use tui::layout::Constraint;
         use tui::style::{Color, Modifier, Style};
-        use tui::widgets::{Block, Borders, Cell, Row, Table};
+        use tui::widgets::{Cell, Row, Table};
 
         let selected_style = Style::default().add_modifier(Modifier::REVERSED);
         let normal_style = Style::default().bg(Color::Blue);
@@ -207,14 +193,10 @@ impl Ui {
             Row::new(cells)
         });
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title("Aggregated Stats");
-
         // TODO: align
         let t = Table::new(rows)
             .header(header)
-            .block(block)
+            .block(self.make_block("Aggregated Stats"))
             .highlight_style(selected_style)
             .highlight_symbol(">> ")
             .widths(&[
@@ -371,14 +353,13 @@ impl Ui {
     fn draw_help(&mut self, f: &mut Frame, area: tui::layout::Rect) {
         use tui::layout::Alignment;
         use tui::text::Spans;
-        use tui::widgets::{Block, Borders, Paragraph};
+        use tui::widgets::Paragraph;
 
-        let block = Block::default().borders(Borders::ALL).title("Help");
         let paragraph = Paragraph::new(vec![
             Spans::from("Quit: 'q' key"),
             Spans::from("Move: UP / DOWN / LEFT / RIGHT keys"),
         ])
-        .block(block)
+        .block(self.make_block("Help"))
         .alignment(Alignment::Left);
         f.render_widget(paragraph, area);
     }
@@ -472,7 +453,7 @@ impl App {
                 self.ui.history.push_back(HistoryItem {
                     timestamp: Instant::now(),
                     time: Local::now(),
-                    connections: self.ui.opt.filter_connections(connections),
+                    connections,
                 });
                 while let Some(item) = self.ui.history.pop_front() {
                     if item.timestamp.elapsed().as_secs_f64() < self.ui.opt.retention_period {

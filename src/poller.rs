@@ -1,4 +1,4 @@
-use crate::stats::ConnectionStats;
+use crate::stats::{ConnectionStats, ConnectionStats2, Stats2};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -10,12 +10,59 @@ pub struct StatsPollingOptions {
     pub sora_api_url: String,
 
     #[clap(long, default_value_t = 1.0)]
-    pub interval: f64,
+    pub interval: f64, // TODO: NonZeroUsize
+
+    #[clap(long, short, default_value = ".*:.*")]
+    pub connection_filter: regex::Regex,
+
+    #[clap(long, short = 'k', default_value = ".*")]
+    pub stats_key_filter: regex::Regex,
 }
 
 impl StatsPollingOptions {
     fn polling_interval(&self) -> Duration {
         Duration::from_secs_f64(self.interval)
+    }
+
+    fn apply_filter(&self, connections: Vec<ConnectionStats>) -> Vec<ConnectionStats> {
+        connections
+            .into_iter()
+            .filter(|c| {
+                c.stats
+                    .iter()
+                    .any(|(k, v)| self.connection_filter.is_match(&format!("{}:{}", k, v)))
+            })
+            .map(|mut c| {
+                let stats = c
+                    .stats
+                    .into_iter()
+                    .filter(|(k, _v)| self.stats_key_filter.is_match(k))
+                    .collect();
+                c.stats = stats;
+                c
+            })
+            .collect()
+    }
+
+    fn apply_filter2(&self, connections: Vec<ConnectionStats2>) -> Vec<ConnectionStats2> {
+        connections
+            .into_iter()
+            .filter(|c| {
+                c.stats.iter().any(|(k, v)| {
+                    self.connection_filter
+                        .is_match(&format!("{}:{}", k, v.value))
+                })
+            })
+            .map(|mut c| {
+                let stats = c
+                    .stats
+                    .into_iter()
+                    .filter(|(k, _v)| self.stats_key_filter.is_match(k))
+                    .collect();
+                c.stats = stats;
+                c
+            })
+            .collect()
     }
 }
 
@@ -26,6 +73,7 @@ impl StatsPollingOptions {
             opt: self.clone(),
             tx,
             last_request_time: Instant::now(),
+            prev: Stats2::empty(),
         };
         poller.poll_once()?;
         std::thread::spawn(move || poller.run());
@@ -42,6 +90,7 @@ struct StatsPoller {
     opt: StatsPollingOptions,
     tx: StatsSender,
     last_request_time: Instant,
+    prev: Stats2,
 }
 
 impl StatsPoller {
@@ -88,9 +137,14 @@ impl StatsPoller {
         );
 
         let mut connections = Vec::new();
+        let mut connections2 = Vec::new();
         for value in values {
-            connections.push(ConnectionStats::from_json(value)?);
+            connections.push(ConnectionStats::from_json(value.clone())?);
+            connections2.push(ConnectionStats2::new(value, &self.prev)?);
         }
+        let connections = self.opt.apply_filter(connections);
+        let connections2 = self.opt.apply_filter2(connections2);
+        self.prev = Stats2::new(connections2);
         Ok(self.tx.send(connections).is_ok())
     }
 }
