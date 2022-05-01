@@ -9,7 +9,7 @@ const SORA_API_HEADER_VALUE: &'static str = "Sora_20171101.GetStatsAllConnection
 pub struct StatsPollingOptions {
     pub sora_url: String,
 
-    #[clap(long, default_value_t = 5.0)]
+    #[clap(long, default_value_t = 1.0)]
     pub polling_interval: f64,
 }
 

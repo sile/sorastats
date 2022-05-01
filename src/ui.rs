@@ -92,7 +92,7 @@ impl Ui {
             )
             .split(f.size());
 
-        self.draw_tabs(f, chunks[0]);
+        self.draw_tabs(f, chunks[0]); // TODO: remove tabs
         self.draw_stats(f, chunks[1], self.opt.tab[self.tab_index].clone());
         self.draw_help(f, chunks[2]);
     }
@@ -107,6 +107,29 @@ impl Ui {
 
         self.draw_aggregated_stats(f, chunks[0], &tab);
         self.draw_detailed_stats(f, chunks[1], &tab);
+    }
+
+    fn selected_item_chart(&self, selected: &StatsItem, tab: &Tab) -> Vec<(f64, f64)> {
+        let mut items = Vec::new();
+        let start = self.history[0].timestamp; // TODO
+        for history_item in &self.history {
+            let x = (history_item.timestamp - start).as_secs_f64();
+            let mut y = 0.0;
+            for conn in &self.history.back().expect("unreachable").connections {
+                if tab.is_match(&conn.stats) {
+                    for (k, v) in &conn.stats {
+                        if let StatsValue::Number(v) = v {
+                            if *k == selected.key {
+                                y += v.0;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            items.push((x, y));
+        }
+        items // TODO: use delta instead of sum
     }
 
     fn selected_item_values(&self, selected: &StatsItem, tab: &Tab) -> Vec<(String, String)> {
@@ -211,6 +234,7 @@ impl Ui {
             let selected = &stats[i]; // TODO: range check
             self.draw_selected_stats(f, chunks[0], selected, tab);
             if selected.is_number() {
+                self.draw_chart(f, chunks[1], selected, tab);
             } else {
             }
         } else {
@@ -219,6 +243,84 @@ impl Ui {
                 .title("Detailed Stats");
             f.render_widget(block, area);
         }
+    }
+
+    fn draw_chart(
+        &mut self,
+        f: &mut Frame,
+        area: tui::layout::Rect,
+        selected: &StatsItem,
+        tab: &Tab,
+    ) {
+        use tui::style::{Color, Modifier, Style};
+        use tui::symbols::Marker;
+        use tui::text::Span;
+        use tui::widgets::{Axis, Block, Borders, Chart, Dataset, GraphType};
+
+        let items = self.selected_item_chart(selected, tab);
+
+        // TODO: add average
+        let datasets = vec![Dataset::default()
+            // .name(ty)
+            .marker(Marker::Braille)
+            .graph_type(GraphType::Line)
+            .data(&items)];
+
+        let chart = Chart::new(datasets)
+            .block(
+                Block::default()
+                    .title(Span::styled(
+                        "Chart",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ))
+                    .borders(Borders::ALL),
+            )
+            .x_axis(
+                Axis::default()
+                    .title(format!(
+                        "Time (duration: {} seconds)",
+                        self.opt.retention_period
+                    ))
+                    .style(Style::default().fg(Color::Gray))
+                    .bounds([0.0, self.opt.retention_period]),
+            )
+            .y_axis(
+                Axis::default()
+                    .style(Style::default().fg(Color::Gray))
+                    // TODO
+                    // .labels(vec![
+                    //     tui::text::Span::styled(
+                    //         "0",
+                    //         tui::style::Style::default().add_modifier(tui::style::Modifier::BOLD),
+                    //     ),
+                    //     tui::text::Span::styled(
+                    //         "50",
+                    //         tui::style::Style::default().add_modifier(tui::style::Modifier::BOLD),
+                    //     ),
+                    //     tui::text::Span::styled(
+                    //         "100",
+                    //         tui::style::Style::default().add_modifier(tui::style::Modifier::BOLD),
+                    //     ),
+                    // ])
+                    .bounds([
+                        // TODO
+                        items
+                            .iter()
+                            .map(|(_, y)| *y)
+                            .min_by(|y0, y1| y0.partial_cmp(&y1).unwrap())
+                            .unwrap()
+                            * 0.99,
+                        items
+                            .iter()
+                            .map(|(_, y)| *y)
+                            .max_by(|y0, y1| y0.partial_cmp(&y1).unwrap())
+                            .unwrap()
+                            * 1.01,
+                    ]),
+            );
+        f.render_widget(chart, area);
     }
 
     fn draw_selected_stats(
