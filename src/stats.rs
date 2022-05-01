@@ -11,8 +11,43 @@ pub struct ConnectionStatsValue {
 
 #[derive(Debug, Clone)]
 pub struct AggregatedStatsValue {
-    pub value_sum: Option<f64>,
+    pub value_sum: Option<f64>, // TODO: u64
     pub delta_per_sec: Option<f64>,
+}
+
+impl AggregatedStatsValue {
+    pub fn format_value_sum(&self) -> String {
+        if let Some(v) = self.value_sum {
+            format_u64(v as u64)
+        } else {
+            String::new()
+        }
+    }
+
+    pub fn format_delta_per_sec(&self) -> String {
+        if let Some(v) = self.delta_per_sec {
+            format_u64(v.round() as u64)
+        } else {
+            String::new()
+        }
+    }
+}
+
+fn format_u64(mut n: u64) -> String {
+    let mut s = Vec::new();
+    for i in 0.. {
+        if i % 3 == 0 && i != 0 {
+            s.push(b',');
+        }
+        let m = n % 10;
+        s.push(b'0' + m as u8);
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    s.reverse();
+    String::from_utf8(s).expect("unreachable")
 }
 
 #[derive(Debug, Clone, Default)]
@@ -138,7 +173,7 @@ impl ConnectionStats2 {
                         .stats
                         .get(&k)
                         .and_then(|x| match (v.as_f64(), x.value.as_f64()) {
-                            (Some(v1), Some(v0)) => Some(v1 - v0 / d.as_secs_f64()),
+                            (Some(v1), Some(v0)) => Some((v1 - v0) / d.as_secs_f64()),
                             _ => None,
                         })
                 } else {

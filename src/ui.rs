@@ -25,11 +25,17 @@ pub struct Ui {
 }
 
 impl Ui {
+    fn latest_stats(&self) -> &Stats2 {
+        &self.history.back().expect("unreachable").stats
+    }
+
     fn new(opt: UiOpts) -> Self {
+        let mut table_state = tui::widgets::TableState::default();
+        table_state.select(Some(0));
         Self {
             opt,
             history: VecDeque::new(),
-            table_state: Default::default(),
+            table_state,
         }
     }
 
@@ -172,31 +178,39 @@ impl Ui {
             .stats
             .aggregated
             .stats;
+
+        // TODO: optimize
+        let sum_width = items
+            .iter()
+            .map(|(_, item)| item.format_value_sum().len())
+            .max()
+            .unwrap_or(0);
+        let delta_width = items
+            .iter()
+            .map(|(_, item)| item.format_delta_per_sec().len())
+            .max()
+            .unwrap_or(0);
+
         let rows = items.iter().map(|(k, item)| {
             let cells = vec![
                 Cell::from(k.clone()),
-                if let Some(v) = item.value_sum {
-                    Cell::from(v.to_string())
-                } else {
-                    Cell::from("")
-                },
-                if let Some(v) = item.delta_per_sec {
-                    Cell::from(v.to_string())
-                } else {
-                    Cell::from("")
-                },
+                Cell::from(format!("{:>sum_width$}", item.format_value_sum())),
+                Cell::from(format!("{:>delta_width$}", item.format_delta_per_sec())),
             ];
             Row::new(cells)
         });
 
         let widths = [
-            Constraint::Percentage(70),
-            Constraint::Percentage(15),
-            Constraint::Percentage(15),
+            Constraint::Percentage(60),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
         ];
 
-        // TODO: padding
-        let highlight_symbol = format!("{}> ", self.table_state.selected().unwrap_or(0) + 1);
+        let highlight_symbol = format!(
+            "{:>width$}> ",
+            self.table_state.selected().unwrap_or(0) + 1,
+            width = (self.latest_stats().item_count()).to_string().len()
+        );
 
         // TODO: align
         let t = Table::new(rows)
@@ -379,11 +393,8 @@ impl App {
     pub fn new(rx: StatsReceiver, opt: UiOpts) -> anyhow::Result<Self> {
         let terminal = Self::setup_terminal()?;
         log::debug!("setup terminal");
-        Ok(Self {
-            rx,
-            ui: Ui::new(opt),
-            terminal,
-        })
+        let ui = Ui::new(opt);
+        Ok(Self { rx, ui, terminal })
     }
 
     pub fn run(mut self) -> anyhow::Result<()> {
@@ -421,6 +432,7 @@ impl App {
                     //     }
                     // }
                     KeyCode::Up => {
+                        // TODO: zero items check
                         let i = if let Some(i) = self.ui.table_state.selected() {
                             i.saturating_sub(1)
                         } else {
@@ -430,9 +442,9 @@ impl App {
                         self.terminal.draw(|f| self.ui.draw(f))?;
                     }
                     KeyCode::Down => {
+                        // TODO: zero items check
                         let i = if let Some(i) = self.ui.table_state.selected() {
-                            // TODO: min
-                            i + 1
+                            std::cmp::min(i + 1, self.ui.latest_stats().item_count() - 1)
                         } else {
                             0
                         };
