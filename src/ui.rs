@@ -154,19 +154,16 @@ impl Ui {
 
     fn draw_aggregated_stats(&mut self, f: &mut Frame, area: tui::layout::Rect) {
         use tui::layout::Constraint;
-        use tui::style::{Color, Modifier, Style};
+        use tui::style::{Modifier, Style};
         use tui::widgets::{Cell, Row, Table};
 
         let selected_style = Style::default().add_modifier(Modifier::REVERSED);
-        let normal_style = Style::default().bg(Color::Blue);
+        let normal_style = Style::default();
 
-        let header_cells = ["Key", "Uniq", "Sum"]
+        let header_cells = ["Key", "Sum", "Delta/s"]
             .into_iter()
-            .map(|h| Cell::from(h).style(Style::default().fg(Color::Red)));
-        let header = Row::new(header_cells)
-            .style(normal_style)
-            .height(1)
-            .bottom_margin(1);
+            .map(|h| Cell::from(h).style(Style::default().add_modifier(Modifier::BOLD)));
+        let header = Row::new(header_cells).style(normal_style).bottom_margin(1);
 
         let items = &self
             .history
@@ -176,27 +173,38 @@ impl Ui {
             .aggregated
             .stats;
         let rows = items.iter().map(|(k, item)| {
-            let mut cells = vec![
+            let cells = vec![
                 Cell::from(k.clone()),
-                Cell::from(item.unique_count.to_string()),
+                if let Some(v) = item.value_sum {
+                    Cell::from(v.to_string())
+                } else {
+                    Cell::from("")
+                },
+                if let Some(v) = item.delta_per_sec {
+                    Cell::from(v.to_string())
+                } else {
+                    Cell::from("")
+                },
             ];
-            if let Some(v) = item.value_sum {
-                cells.push(Cell::from(v.to_string()));
-            }
             Row::new(cells)
         });
+
+        let widths = [
+            Constraint::Percentage(70),
+            Constraint::Percentage(15),
+            Constraint::Percentage(15),
+        ];
+
+        // TODO: padding
+        let highlight_symbol = format!("{}> ", self.table_state.selected().unwrap_or(0) + 1);
 
         // TODO: align
         let t = Table::new(rows)
             .header(header)
             .block(self.make_block("Aggregated Stats"))
             .highlight_style(selected_style)
-            .highlight_symbol(">> ")
-            .widths(&[
-                Constraint::Percentage(70),
-                Constraint::Percentage(15),
-                Constraint::Percentage(15),
-            ]);
+            .highlight_symbol(&highlight_symbol)
+            .widths(&widths);
         f.render_stateful_widget(t, area, &mut self.table_state);
     }
 
@@ -222,7 +230,9 @@ impl Ui {
                 .expect("TODO: range check")
                 .to_owned();
             self.draw_selected_stats(f, chunks[0], &selected);
-            self.draw_chart(f, chunks[1], &selected);
+            if false {
+                self.draw_chart(f, chunks[1], &selected);
+            }
         } else {
             let block = Block::default()
                 .borders(Borders::ALL)
@@ -305,17 +315,17 @@ impl Ui {
 
     fn draw_selected_stats(&mut self, f: &mut Frame, area: tui::layout::Rect, selected: &str) {
         use tui::layout::Constraint;
-        use tui::style::{Color, Modifier, Style};
+        use tui::style::{Modifier, Style};
         use tui::widgets::{Block, Borders, Cell, Row, Table};
 
         let items = self.selected_item_values(selected);
 
         let selected_style = Style::default().add_modifier(Modifier::REVERSED);
-        let normal_style = Style::default().bg(Color::Blue);
+        let normal_style = Style::default();
 
         let header_cells = ["Connection ID", "Value"]
             .into_iter()
-            .map(|h| Cell::from(h).style(Style::default().fg(Color::Red)));
+            .map(|h| Cell::from(h).style(Style::default().add_modifier(Modifier::BOLD)));
         let header = Row::new(header_cells)
             .style(normal_style)
             .height(1)

@@ -1,6 +1,6 @@
 use anyhow::Context;
 use ordered_float::OrderedFloat;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::SystemTime;
 
 #[derive(Debug, Clone)]
@@ -11,7 +11,6 @@ pub struct ConnectionStatsValue {
 
 #[derive(Debug, Clone)]
 pub struct AggregatedStatsValue {
-    pub unique_count: usize,
     pub value_sum: Option<f64>,
     pub delta_per_sec: Option<f64>,
 }
@@ -23,13 +22,13 @@ pub struct AggregatedStats {
 
 impl AggregatedStats {
     fn new(connections: &[ConnectionStats2]) -> Self {
-        let mut uniqs = BTreeMap::<_, HashSet<_>>::new();
+        let mut keys = BTreeSet::new();
         let mut sums = BTreeMap::<_, f64>::new();
         let mut deltas = BTreeMap::<_, f64>::new();
 
         for conn in connections {
             for (k, item) in &conn.stats {
-                uniqs.entry(k).or_default().insert(&item.value);
+                keys.insert(k);
                 if let Some(v) = item.value.as_f64() {
                     *sums.entry(k).or_default() += v;
                 }
@@ -39,11 +38,10 @@ impl AggregatedStats {
             }
         }
 
-        let stats = uniqs
+        let stats = keys
             .into_iter()
-            .map(|(k, set)| {
+            .map(|k| {
                 let v = AggregatedStatsValue {
-                    unique_count: set.len(),
                     value_sum: sums.get(k).copied(),
                     delta_per_sec: deltas.get(k).copied(),
                 };
