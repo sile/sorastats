@@ -109,6 +109,23 @@ impl Ui {
         self.draw_detailed_stats(f, chunks[1], &tab);
     }
 
+    fn selected_item_values(&self, selected: &StatsItem, tab: &Tab) -> Vec<(String, String)> {
+        let mut items = Vec::new();
+        for conn in &self.history.back().expect("unreachable").connections {
+            if tab.is_match(&conn.stats) {
+                for (k, v) in &conn.stats {
+                    if *k == selected.key {
+                        let connection_id = conn.stats["connection_id"].to_string(); // TODO
+                        items.push((connection_id, v.to_string()));
+                        break;
+                    }
+                }
+            }
+        }
+        // TODO: sort
+        items
+    }
+
     fn latest_stats(&self, tab: &Tab) -> Vec<StatsItem> {
         let mut items = BTreeMap::<_, StatsItem>::new();
         for conn in &self.history.back().expect("unreachable").connections {
@@ -160,9 +177,11 @@ impl Ui {
             Row::new(cells)
         });
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title("Aggregated Stats"); // TODO: N connections
+        let block = Block::default().borders(Borders::ALL).title(format!(
+            "Aggregated Stats: connections={}, updated={:?}",
+            self.history.back().expect("TODO").connections.len(),
+            std::time::SystemTime::now() // TODO: use the last polled timestamp
+        )); // TODO: N connections
 
         // TODO: align
         let t = Table::new(rows)
@@ -179,12 +198,73 @@ impl Ui {
     }
 
     fn draw_detailed_stats(&mut self, f: &mut Frame, area: tui::layout::Rect, tab: &Tab) {
+        use tui::layout::{Constraint, Direction, Layout};
         use tui::widgets::{Block, Borders};
+
+        if let Some(i) = self.table_state.selected() {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+                .split(area);
+
+            let stats = self.latest_stats(tab);
+            let selected = &stats[i]; // TODO: range check
+            self.draw_selected_stats(f, chunks[0], selected, tab);
+            if selected.is_number() {
+            } else {
+            }
+        } else {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title("Detailed Stats");
+            f.render_widget(block, area);
+        }
+    }
+
+    fn draw_selected_stats(
+        &mut self,
+        f: &mut Frame,
+        area: tui::layout::Rect,
+        selected: &StatsItem,
+        tab: &Tab,
+    ) {
+        use tui::layout::Constraint;
+        use tui::style::{Color, Modifier, Style};
+        use tui::widgets::{Block, Borders, Cell, Row, Table};
+
+        let items = self.selected_item_values(selected, tab);
+
+        let selected_style = Style::default().add_modifier(Modifier::REVERSED);
+        let normal_style = Style::default().bg(Color::Blue);
+
+        let header_cells = ["Connection ID", "Value"]
+            .into_iter()
+            .map(|h| Cell::from(h).style(Style::default().fg(Color::Red)));
+        let header = Row::new(header_cells)
+            .style(normal_style)
+            .height(1)
+            .bottom_margin(1);
+
+        let rows = items.into_iter().map(|(connection_id, value)| {
+            Row::new(vec![Cell::from(connection_id), Cell::from(value)])
+        });
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .title("Detailed Stats");
-        f.render_widget(block, area);
+            .title(format!("Values of {:?}", selected.key));
+
+        // TODO: align
+        let t = Table::new(rows)
+            .header(header)
+            .block(block)
+            .highlight_style(selected_style)
+            .highlight_symbol(">> ")
+            .widths(&[
+                Constraint::Percentage(50), // TODO: length
+                Constraint::Percentage(50),
+            ]);
+        let mut state = Default::default(); // TODO
+        f.render_stateful_widget(t, area, &mut state);
     }
 
     fn draw_tabs(&mut self, f: &mut Frame, area: tui::layout::Rect) {
@@ -210,11 +290,21 @@ impl Ui {
         f.render_widget(tabs, area);
     }
 
+    // TODO: rename
     fn draw_help(&mut self, f: &mut Frame, area: tui::layout::Rect) {
-        use tui::widgets::{Block, Borders};
+        use tui::layout::Alignment;
+        use tui::text::Spans;
+        use tui::widgets::{Block, Borders, Paragraph};
 
         let block = Block::default().borders(Borders::ALL).title("Help");
-        f.render_widget(block, area);
+        let paragraph = Paragraph::new(vec![
+            Spans::from("Quit: 'q'"),
+            Spans::from("Move tabs: left arrow and right arrow"),
+            Spans::from("Move table cells: up arrow and down arrow"),
+        ])
+        .block(block)
+        .alignment(Alignment::Left);
+        f.render_widget(paragraph, area);
     }
 }
 
@@ -378,5 +468,11 @@ impl StatsItem {
             }
         }
         Ok(sum)
+    }
+
+    pub fn is_number(&self) -> bool {
+        self.values
+            .iter()
+            .all(|x| matches!(x, StatsValue::Number(_)))
     }
 }
