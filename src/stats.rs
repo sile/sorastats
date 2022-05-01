@@ -1,3 +1,4 @@
+use anyhow::Context;
 use ordered_float::OrderedFloat;
 use std::collections::{BTreeMap, HashSet};
 use std::time::SystemTime;
@@ -65,6 +66,14 @@ pub struct Stats2 {
 }
 
 impl Stats2 {
+    pub fn connection_count(&self) -> usize {
+        self.connections.len()
+    }
+
+    pub fn item_count(&self) -> usize {
+        self.aggregated.stats.len()
+    }
+
     // TODO: BTreeMap
     pub fn new(connections: Vec<ConnectionStats2>) -> Self {
         let aggregated = AggregatedStats::new(&connections);
@@ -103,12 +112,17 @@ impl ConnectionStats2 {
         let connection_id = obj
             .get("connection_id")
             .ok_or_else(|| anyhow::anyhow!("missing 'connection_id'"))?
-            .to_string();
+            .as_str()
+            .expect("TODO")
+            .to_owned();
         let timestamp = obj
             .get("timestamp")
             .ok_or_else(|| anyhow::anyhow!("missing 'timestamp'"))?
-            .to_string();
-        let timestamp = chrono::DateTime::parse_from_rfc3339(&timestamp)?;
+            .as_str()
+            .expect("TODO")
+            .to_owned();
+        let timestamp = chrono::DateTime::parse_from_rfc3339(&timestamp)
+            .with_context(|| format!("parse timestamp failed: {:?}", timestamp))?;
 
         let mut key = String::new();
         let mut stats = Stats::new();

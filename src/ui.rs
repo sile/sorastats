@@ -1,8 +1,8 @@
 use crate::poller::StatsReceiver;
-use crate::stats::{ConnectionStats, StatsValue};
+use crate::stats::Stats2;
 use chrono::{DateTime, Local};
 use clap::Parser;
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Parser)]
@@ -82,12 +82,12 @@ impl Ui {
             )),
             Spans::from(format!(
                 "Connections: {:5} (filter={})",
-                item.connections.len(),
+                item.stats.connection_count(),
                 "TODO" // self.opt.connection_filter
             )),
             Spans::from(format!(
                 "Stats  Keys: {:5} (filter={})",
-                item.connections.get(0).map_or(0, |c| c.stats.len()),
+                item.stats.item_count(),
                 "TODO" //self.opt.stats_key_filter
             )),
         ])
@@ -108,52 +108,48 @@ impl Ui {
         self.draw_detailed_stats(f, chunks[1]);
     }
 
-    fn selected_item_chart(&self, selected: &StatsItem) -> Vec<(f64, f64)> {
-        let mut items = Vec::new();
-        let start = self.history[0].timestamp; // TODO
-        for history_item in &self.history {
-            let x = (history_item.timestamp - start).as_secs_f64();
-            let mut y = 0.0;
-            for conn in &self.history.back().expect("unreachable").connections {
-                for (k, v) in &conn.stats {
-                    if let StatsValue::Number(v) = v {
-                        if *k == selected.key {
-                            y += v.0;
-                            break;
-                        }
-                    }
-                }
-            }
-            items.push((x, y));
-        }
-        items // TODO: use delta instead of sum
+    fn selected_item_chart(&self, _selected: &str) -> Vec<(f64, f64)> {
+        // TODO
+        // let mut items = Vec::new();
+        // let start = self.history[0].timestamp; // TODO
+        // for history_item in &self.history {
+        //     let x = (history_item.timestamp - start).as_secs_f64();
+        //     let mut y = 0.0;
+        //     for conn in &self.history.back().expect("unreachable").connections {
+        //         for (k, v) in &conn.stats {
+        //             if let StatsValue::Number(v) = v {
+        //                 if *k == selected.key {
+        //                     y += v.0;
+        //                     break;
+        //                 }
+        //             }
+        //         }
+        //     }
+        //     items.push((x, y));
+        // }
+        // items // TODO: use delta instead of sum
+        Vec::new()
     }
 
-    fn selected_item_values(&self, selected: &StatsItem) -> Vec<(String, String)> {
+    fn selected_item_values(&self, selected: &str) -> Vec<(String, String)> {
         let mut items = Vec::new();
-        for conn in &self.history.back().expect("unreachable").connections {
+        for conn in self
+            .history
+            .back()
+            .expect("unreachable")
+            .stats
+            .connections
+            .values()
+        {
             for (k, v) in &conn.stats {
-                if *k == selected.key {
-                    let connection_id = conn.stats["connection_id"].to_string(); // TODO
-                    items.push((connection_id, v.to_string()));
+                if k == selected {
+                    items.push((conn.connection_id.clone(), v.value.to_string()));
                     break;
                 }
             }
         }
         // TODO: sort
         items
-    }
-
-    fn latest_stats(&self) -> Vec<StatsItem> {
-        let mut items = BTreeMap::<_, StatsItem>::new();
-        for conn in &self.history.back().expect("unreachable").connections {
-            for (k, v) in &conn.stats {
-                let entry = items.entry(k).or_default();
-                entry.key = k.clone();
-                entry.values.insert(v.clone());
-            }
-        }
-        items.into_iter().map(|(_, v)| v).collect()
     }
 
     fn draw_aggregated_stats(&mut self, f: &mut Frame, area: tui::layout::Rect) {
@@ -164,7 +160,7 @@ impl Ui {
         let selected_style = Style::default().add_modifier(Modifier::REVERSED);
         let normal_style = Style::default().bg(Color::Blue);
 
-        let header_cells = ["Key", "Sum", "Uniq"]
+        let header_cells = ["Key", "Uniq", "Sum"]
             .into_iter()
             .map(|h| Cell::from(h).style(Style::default().fg(Color::Red)));
         let header = Row::new(header_cells)
@@ -172,24 +168,21 @@ impl Ui {
             .height(1)
             .bottom_margin(1);
 
-        let items = self.latest_stats();
-        let rows = items.into_iter().map(|item| {
-            let cells = match item.aggregated_value() {
-                Ok(sum) => {
-                    vec![
-                        Cell::from(item.key),
-                        Cell::from(sum.to_string()),
-                        Cell::from(""),
-                    ]
-                }
-                Err(uniq) => {
-                    vec![
-                        Cell::from(item.key),
-                        Cell::from(""),
-                        Cell::from(uniq.to_string()),
-                    ]
-                }
-            };
+        let items = &self
+            .history
+            .back()
+            .expect("unreachable")
+            .stats
+            .aggregated
+            .stats;
+        let rows = items.iter().map(|(k, item)| {
+            let mut cells = vec![
+                Cell::from(k.clone()),
+                Cell::from(item.unique_count.to_string()),
+            ];
+            if let Some(v) = item.value_sum {
+                cells.push(Cell::from(v.to_string()));
+            }
             Row::new(cells)
         });
 
@@ -217,13 +210,19 @@ impl Ui {
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
                 .split(area);
 
-            let stats = self.latest_stats();
-            let selected = &stats[i]; // TODO: range check
-            self.draw_selected_stats(f, chunks[0], selected);
-            if selected.is_number() {
-                self.draw_chart(f, chunks[1], selected);
-            } else {
-            }
+            let selected = self
+                .history
+                .back()
+                .expect("unreachable")
+                .stats
+                .aggregated
+                .stats
+                .keys()
+                .nth(i)
+                .expect("TODO: range check")
+                .to_owned();
+            self.draw_selected_stats(f, chunks[0], &selected);
+            self.draw_chart(f, chunks[1], &selected);
         } else {
             let block = Block::default()
                 .borders(Borders::ALL)
@@ -232,7 +231,7 @@ impl Ui {
         }
     }
 
-    fn draw_chart(&mut self, f: &mut Frame, area: tui::layout::Rect, selected: &StatsItem) {
+    fn draw_chart(&mut self, f: &mut Frame, area: tui::layout::Rect, selected: &str) {
         use tui::style::{Color, Modifier, Style};
         use tui::symbols::Marker;
         use tui::text::Span;
@@ -304,12 +303,7 @@ impl Ui {
         f.render_widget(chart, area);
     }
 
-    fn draw_selected_stats(
-        &mut self,
-        f: &mut Frame,
-        area: tui::layout::Rect,
-        selected: &StatsItem,
-    ) {
+    fn draw_selected_stats(&mut self, f: &mut Frame, area: tui::layout::Rect, selected: &str) {
         use tui::layout::Constraint;
         use tui::style::{Color, Modifier, Style};
         use tui::widgets::{Block, Borders, Cell, Row, Table};
@@ -333,7 +327,7 @@ impl Ui {
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(format!("Values of {:?}", selected.key));
+            .title(format!("Values of {:?}", selected));
 
         // TODO: align
         let t = Table::new(rows)
@@ -448,12 +442,12 @@ impl App {
                 anyhow::bail!("Sora stats polling thread terminated unexpectedly");
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            Ok(connections) => {
+            Ok(stats) => {
                 log::debug!("recv new stats");
                 self.ui.history.push_back(HistoryItem {
                     timestamp: Instant::now(),
                     time: Local::now(),
-                    connections,
+                    stats,
                 });
                 while let Some(item) = self.ui.history.pop_front() {
                     if item.timestamp.elapsed().as_secs_f64() < self.ui.opt.retention_period {
@@ -505,33 +499,7 @@ impl Drop for App {
 
 #[derive(Debug)]
 pub struct HistoryItem {
-    timestamp: Instant,
-    time: DateTime<Local>,
-    connections: Vec<ConnectionStats>,
-}
-
-#[derive(Debug, Default)]
-pub struct StatsItem {
-    key: String,
-    values: HashSet<StatsValue>,
-}
-
-impl StatsItem {
-    pub fn aggregated_value(&self) -> Result<f64, usize> {
-        let mut sum = 0.0;
-        for v in &self.values {
-            if let StatsValue::Number(v) = v {
-                sum += v.0;
-            } else {
-                return Err(self.values.len());
-            }
-        }
-        Ok(sum)
-    }
-
-    pub fn is_number(&self) -> bool {
-        self.values
-            .iter()
-            .all(|x| matches!(x, StatsValue::Number(_)))
-    }
+    timestamp: Instant,    // TODO: delete(?)
+    time: DateTime<Local>, // TODO: delete
+    stats: Stats2,
 }

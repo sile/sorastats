@@ -81,9 +81,9 @@ impl StatsPollingOptions {
     }
 }
 
-pub type StatsReceiver = mpsc::Receiver<Vec<ConnectionStats>>;
+pub type StatsReceiver = mpsc::Receiver<Stats2>;
 
-type StatsSender = mpsc::Sender<Vec<ConnectionStats>>;
+type StatsSender = mpsc::Sender<Stats2>;
 
 #[derive(Debug)]
 struct StatsPoller {
@@ -142,9 +142,9 @@ impl StatsPoller {
             connections.push(ConnectionStats::from_json(value.clone())?);
             connections2.push(ConnectionStats2::new(value, &self.prev)?);
         }
-        let connections = self.opt.apply_filter(connections);
+        let _connections = self.opt.apply_filter(connections); // TODO: delete
         let connections2 = self.opt.apply_filter2(connections2);
         self.prev = Stats2::new(connections2);
-        Ok(self.tx.send(connections).is_ok())
+        Ok(self.tx.send(self.prev.clone()).is_ok())
     }
 }
