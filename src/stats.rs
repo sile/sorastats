@@ -3,15 +3,18 @@ use ordered_float::OrderedFloat;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::SystemTime;
 
+pub type StatsItemKey = String;
+pub type ConnectionId = String;
+
 #[derive(Debug, Clone)]
-pub struct ConnectionStatsValue {
-    pub value: StatsValue,
+pub struct ConnectionStatsItemValue {
+    pub value: StatsItemValue,
     pub delta_per_sec: Option<f64>,
 }
 
-impl ConnectionStatsValue {
+impl ConnectionStatsItemValue {
     pub fn format_value(&self) -> String {
-        if let StatsValue::Number(v) = self.value {
+        if let StatsItemValue::Number(v) = self.value {
             format_u64(v.0 as u64)
         } else {
             self.value.to_string()
@@ -28,15 +31,15 @@ impl ConnectionStatsValue {
 }
 
 #[derive(Debug, Clone)]
-pub struct AggregatedStatsValue {
-    pub value_sum: Option<f64>, // TODO: u64
+pub struct AggregatedStatsItemValue {
+    pub value_sum: Option<f64>,
     pub delta_per_sec: Option<f64>,
 }
 
-impl AggregatedStatsValue {
+impl AggregatedStatsItemValue {
     pub fn format_value_sum(&self) -> String {
         if let Some(v) = self.value_sum {
-            format_u64(v as u64)
+            format_u64(v.round() as u64)
         } else {
             String::new()
         }
@@ -68,19 +71,46 @@ fn format_u64(mut n: u64) -> String {
     String::from_utf8(s).expect("unreachable")
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum StatsItemValue {
+    Number(OrderedFloat<f64>),
+    Bool(bool),
+    String(String),
+}
+
+impl StatsItemValue {
+    pub fn as_f64(&self) -> Option<f64> {
+        if let Self::Number(v) = self {
+            Some(v.0)
+        } else {
+            None
+        }
+    }
+}
+
+impl std::fmt::Display for StatsItemValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Number(x) => write!(f, "{x}"),
+            Self::Bool(x) => write!(f, "{x}"),
+            Self::String(x) => write!(f, "{x}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct AggregatedStats {
-    pub stats: BTreeMap<StatsKey, AggregatedStatsValue>,
+    pub items: BTreeMap<StatsItemKey, AggregatedStatsItemValue>,
 }
 
 impl AggregatedStats {
-    fn new(connections: &[ConnectionStats2]) -> Self {
+    fn new(connections: &[ConnectionStats]) -> Self {
         let mut keys = BTreeSet::new();
         let mut sums = BTreeMap::<_, f64>::new();
         let mut deltas = BTreeMap::<_, f64>::new();
 
         for conn in connections {
-            for (k, item) in &conn.stats {
+            for (k, item) in &conn.items {
                 keys.insert(k);
                 if let Some(v) = item.value.as_f64() {
                     *sums.entry(k).or_default() += v;
@@ -91,42 +121,29 @@ impl AggregatedStats {
             }
         }
 
-        let stats = keys
+        let items = keys
             .into_iter()
             .map(|k| {
-                let v = AggregatedStatsValue {
+                let v = AggregatedStatsItemValue {
                     value_sum: sums.get(k).copied(),
                     delta_per_sec: deltas.get(k).copied(),
                 };
                 (k.to_owned(), v)
             })
             .collect();
-        Self { stats }
+        Self { items }
     }
 }
 
-pub type StatsKey = String; // TODO: StatsItemKey
-pub type ConnectionId = String;
-
-// TODO: rename
 #[derive(Debug, Clone)]
-pub struct Stats2 {
+pub struct Stats {
     pub time: SystemTime,
     pub aggregated: AggregatedStats,
-    pub connections: BTreeMap<ConnectionId, ConnectionStats2>,
+    pub connections: BTreeMap<ConnectionId, ConnectionStats>,
 }
 
-impl Stats2 {
-    pub fn connection_count(&self) -> usize {
-        self.connections.len()
-    }
-
-    pub fn item_count(&self) -> usize {
-        self.aggregated.stats.len()
-    }
-
-    // TODO: BTreeMap
-    pub fn new(connections: Vec<ConnectionStats2>) -> Self {
+impl Stats {
+    pub fn new(connections: Vec<ConnectionStats>) -> Self {
         let aggregated = AggregatedStats::new(&connections);
         let connections = connections
             .into_iter()
@@ -146,17 +163,25 @@ impl Stats2 {
             connections: Default::default(),
         }
     }
+
+    pub fn connection_count(&self) -> usize {
+        self.connections.len()
+    }
+
+    pub fn item_count(&self) -> usize {
+        self.aggregated.items.len()
+    }
 }
 
 #[derive(Debug, Clone)]
-pub struct ConnectionStats2 {
+pub struct ConnectionStats {
     pub connection_id: ConnectionId,
     pub timestamp: chrono::DateTime<chrono::FixedOffset>,
-    pub stats: BTreeMap<String, ConnectionStatsValue>,
+    pub items: BTreeMap<StatsItemKey, ConnectionStatsItemValue>,
 }
 
-impl ConnectionStats2 {
-    pub fn new(json: serde_json::Value, prev: &Stats2) -> anyhow::Result<Self> {
+impl ConnectionStats {
+    pub fn new(json: serde_json::Value, prev: &Stats) -> anyhow::Result<Self> {
         let obj = json
             .as_object()
             .ok_or_else(|| anyhow::anyhow!("not a JSON object"))?;
@@ -164,31 +189,31 @@ impl ConnectionStats2 {
             .get("connection_id")
             .ok_or_else(|| anyhow::anyhow!("missing 'connection_id'"))?
             .as_str()
-            .expect("TODO")
+            .ok_or_else(|| anyhow::anyhow!("not a JSON string"))?
             .to_owned();
         let timestamp = obj
             .get("timestamp")
             .ok_or_else(|| anyhow::anyhow!("missing 'timestamp'"))?
             .as_str()
-            .expect("TODO")
+            .ok_or_else(|| anyhow::anyhow!("not a JSON string"))?
             .to_owned();
         let timestamp = chrono::DateTime::parse_from_rfc3339(&timestamp)
             .with_context(|| format!("parse timestamp failed: {:?}", timestamp))?;
 
         let mut key = String::new();
-        let mut stats = Stats::new();
-        collect_stats(obj, &mut stats, &mut key);
+        let mut stats_items = BTreeMap::new();
+        collect_stats_items(obj, &mut stats_items, &mut key);
 
         let duration = prev
             .connections
             .get(&connection_id)
             .map(|c| (timestamp - c.timestamp).to_std().expect("TODO"));
-        let stats = stats
+        let items = stats_items
             .into_iter()
             .map(|(k, v)| {
                 let delta_per_sec = if let Some(d) = duration {
                     prev.connections[&connection_id]
-                        .stats
+                        .items
                         .get(&k)
                         .and_then(|x| match (v.as_f64(), x.value.as_f64()) {
                             (Some(v1), Some(v0)) => Some((v1 - v0) / d.as_secs_f64()),
@@ -197,7 +222,7 @@ impl ConnectionStats2 {
                 } else {
                     None
                 };
-                let v = ConnectionStatsValue {
+                let v = ConnectionStatsItemValue {
                     value: v,
                     delta_per_sec,
                 };
@@ -207,61 +232,14 @@ impl ConnectionStats2 {
         Ok(Self {
             connection_id,
             timestamp,
-            stats,
+            items,
         })
     }
 }
 
-pub type Stats = BTreeMap<String, StatsValue>;
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum StatsValue {
-    Number(OrderedFloat<f64>),
-    Bool(bool),
-    String(String),
-}
-
-impl StatsValue {
-    pub fn as_f64(&self) -> Option<f64> {
-        if let Self::Number(v) = self {
-            Some(v.0)
-        } else {
-            None
-        }
-    }
-}
-
-impl std::fmt::Display for StatsValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::Number(x) => write!(f, "{x}"),
-            Self::Bool(x) => write!(f, "{x}"),
-            Self::String(x) => write!(f, "{x}"),
-        }
-    }
-}
-
-// TODO: remove
-#[derive(Debug, Clone)]
-pub struct ConnectionStats {
-    pub stats: Stats,
-}
-
-impl ConnectionStats {
-    pub fn from_json(value: serde_json::Value) -> anyhow::Result<Self> {
-        let obj = value
-            .as_object()
-            .ok_or_else(|| anyhow::anyhow!("not a JSON object"))?;
-        let mut key = String::new();
-        let mut stats = Stats::new();
-        collect_stats(obj, &mut stats, &mut key);
-        Ok(Self { stats })
-    }
-}
-
-fn collect_stats(
+fn collect_stats_items(
     obj: &serde_json::Map<String, serde_json::Value>,
-    stats: &mut Stats,
+    items: &mut BTreeMap<StatsItemKey, StatsItemValue>,
     key: &mut String,
 ) {
     for (k, v) in obj {
@@ -273,19 +251,19 @@ fn collect_stats(
         match v {
             serde_json::Value::Number(v) => {
                 if let Some(v) = v.as_f64() {
-                    stats.insert(key.clone(), StatsValue::Number(OrderedFloat(v)));
+                    items.insert(key.clone(), StatsItemValue::Number(OrderedFloat(v)));
                 } else {
                     log::warn!("too large number (ignored): {v}");
                 }
             }
             serde_json::Value::Bool(v) => {
-                stats.insert(key.clone(), StatsValue::Bool(*v));
+                items.insert(key.clone(), StatsItemValue::Bool(*v));
             }
             serde_json::Value::String(v) => {
-                stats.insert(key.clone(), StatsValue::String(v.clone()));
+                items.insert(key.clone(), StatsItemValue::String(v.clone()));
             }
             serde_json::Value::Object(children) => {
-                collect_stats(children, stats, key);
+                collect_stats_items(children, items, key);
             }
             _ => {
                 log::warn!("unexpected stats value (ignored): {v}");

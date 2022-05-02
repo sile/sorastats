@@ -1,4 +1,4 @@
-use crate::stats::{ConnectionStats2, Stats2};
+use crate::stats::{ConnectionStats, Stats};
 use crate::Options;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -6,15 +6,15 @@ use std::time::{Duration, Instant};
 const SORA_API_HEADER_NAME: &'static str = "x-sora-target";
 const SORA_API_HEADER_VALUE: &'static str = "Sora_20171101.GetStatsAllConnections";
 
-pub type StatsReceiver = mpsc::Receiver<Stats2>;
-pub type StatsSender = mpsc::Sender<Stats2>;
+pub type StatsReceiver = mpsc::Receiver<Stats>;
+pub type StatsSender = mpsc::Sender<Stats>;
 
 #[derive(Debug)]
 pub struct StatsPoller {
     options: Options,
     tx: StatsSender,
     prev_request_time: Instant,
-    prev_stats: Stats2,
+    prev_stats: Stats,
 }
 
 impl StatsPoller {
@@ -24,7 +24,7 @@ impl StatsPoller {
             options,
             tx,
             prev_request_time: Instant::now(),
-            prev_stats: Stats2::empty(),
+            prev_stats: Stats::empty(),
         };
         poller.poll_once()?;
         std::thread::spawn(move || poller.run());
@@ -72,30 +72,29 @@ impl StatsPoller {
 
         let mut connections = Vec::new();
         for value in values {
-            connections.push(ConnectionStats2::new(value, &self.prev_stats)?);
+            connections.push(ConnectionStats::new(value, &self.prev_stats)?);
         }
         let connections = self.apply_filters(connections);
-        self.prev_stats = Stats2::new(connections);
+        self.prev_stats = Stats::new(connections);
         Ok(self.tx.send(self.prev_stats.clone()).is_ok())
     }
 
-    fn apply_filters(&self, connections: Vec<ConnectionStats2>) -> Vec<ConnectionStats2> {
+    fn apply_filters(&self, connections: Vec<ConnectionStats>) -> Vec<ConnectionStats> {
         connections
             .into_iter()
             .filter(|c| {
-                c.stats.iter().any(|(k, v)| {
+                c.items.iter().any(|(k, v)| {
                     self.options
                         .connection_filter
                         .is_match(&format!("{}:{}", k, v.value))
                 })
             })
             .map(|mut c| {
-                let stats = c
-                    .stats
+                c.items = c
+                    .items
                     .into_iter()
                     .filter(|(k, _v)| self.options.stats_key_filter.is_match(k))
                     .collect();
-                c.stats = stats;
                 c
             })
             .collect()

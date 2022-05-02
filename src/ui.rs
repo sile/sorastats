@@ -1,5 +1,5 @@
 use crate::poll::StatsReceiver;
-use crate::stats::Stats2;
+use crate::stats::Stats;
 use crate::Options;
 use chrono::{DateTime, Local};
 use clap::Parser;
@@ -35,7 +35,7 @@ pub struct Ui {
 }
 
 impl Ui {
-    fn latest_stats(&self) -> &Stats2 {
+    fn latest_stats(&self) -> &Stats {
         &self.history.back().expect("unreachable").stats
     }
 
@@ -149,7 +149,7 @@ impl Ui {
             if let Some(y) = history_item
                 .stats
                 .aggregated
-                .stats
+                .items
                 .get(selected)
                 .and_then(|x| x.delta_per_sec)
             {
@@ -182,7 +182,7 @@ impl Ui {
             .expect("unreachable")
             .stats
             .aggregated
-            .stats;
+            .items;
 
         // TODO: optimize
         let sum_width = items
@@ -243,7 +243,7 @@ impl Ui {
                 .expect("unreachable")
                 .stats
                 .aggregated
-                .stats
+                .items
                 .keys()
                 .nth(i)
                 .expect("TODO: range check")
@@ -317,7 +317,7 @@ impl Ui {
         let mut delta_width = 0;
         let mut is_value_num = true;
         for conn in self.latest_stats().connections.values() {
-            if let Some((_, item)) = conn.stats.iter().find(|(k, _)| *k == selected) {
+            if let Some((_, item)) = conn.items.iter().find(|(k, _)| *k == selected) {
                 let value = item.format_value();
                 let delta = item.format_delta_per_sec();
                 is_value_num &= item.value.as_f64().is_some();
@@ -569,5 +569,5 @@ impl Drop for App {
 pub struct HistoryItem {
     timestamp: Instant,    // TODO: delete(?)
     time: DateTime<Local>, // TODO: delete
-    stats: Stats2,
+    stats: Stats,
 }
