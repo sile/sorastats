@@ -7,6 +7,8 @@ sorastats
 
 [WebRTC SFU Sora] の[統計情報][統計 API]をターミナルで閲覧するためのビューアです。
 
+![sorastats demo](sorastats.gif)
+
 [WebRTC SFU Sora]: https://sora.shiguredo.jp/
 [統計 API]: https://sora-doc.shiguredo.jp/API#dacb9c
 
