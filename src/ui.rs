@@ -193,7 +193,7 @@ impl UiState {
     }
 
     fn latest_stats(&self) -> &Stats {
-        &self.history.back().expect("unreachable")
+        self.history.back().expect("unreachable")
     }
 
     fn render(&mut self, f: &mut Frame) {
@@ -363,7 +363,7 @@ impl UiState {
         } else {
             &["Connection ID", "Value"][..]
         }
-        .into_iter()
+        .iter()
         .map(|&h| Cell::from(h).style(Style::default().add_modifier(Modifier::BOLD)));
         let header = Row::new(header_cells).bottom_margin(1);
 

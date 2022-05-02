@@ -3,8 +3,8 @@ use crate::Options;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-const SORA_API_HEADER_NAME: &'static str = "x-sora-target";
-const SORA_API_HEADER_VALUE: &'static str = "Sora_20171101.GetStatsAllConnections";
+const SORA_API_HEADER_NAME: &str = "x-sora-target";
+const SORA_API_HEADER_VALUE: &str = "Sora_20171101.GetStatsAllConnections";
 
 pub type StatsReceiver = mpsc::Receiver<Stats>;
 pub type StatsSender = mpsc::Sender<Stats>;
