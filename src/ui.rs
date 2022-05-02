@@ -1,22 +1,13 @@
 use crate::poll::StatsReceiver;
 use crate::stats::Stats;
 use crate::Options;
-use chrono::{DateTime, Local};
-use clap::Parser;
 use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Focus {
     AggregatedStats,
     ConnectionStats,
-}
-
-#[derive(Debug, Parser)]
-pub struct UiOpts {
-    // TODO: rename
-    #[clap(long, default_value_t = 600.0)]
-    pub retention_period: f64,
 }
 
 type Terminal = tui::Terminal<tui::backend::CrosstermBackend<std::io::Stdout>>;
@@ -27,8 +18,7 @@ type Frame<'a> = tui::Frame<'a, tui::backend::CrosstermBackend<std::io::Stdout>>
 #[derive(Debug)]
 pub struct Ui {
     options: Options,
-    opt: UiOpts,
-    history: VecDeque<HistoryItem>,
+    history: VecDeque<Stats>,
     table_state: tui::widgets::TableState, // TODO: rename
     connection_table_state: tui::widgets::TableState, // TODO: rename
     focus: Focus,
@@ -36,10 +26,10 @@ pub struct Ui {
 
 impl Ui {
     fn latest_stats(&self) -> &Stats {
-        &self.history.back().expect("unreachable").stats
+        &self.history.back().expect("unreachable")
     }
 
-    fn new(opt: UiOpts, options: Options) -> Self {
+    fn new(options: Options) -> Self {
         let mut table_state = tui::widgets::TableState::default();
         table_state.select(Some(0));
 
@@ -48,7 +38,6 @@ impl Ui {
 
         Self {
             options,
-            opt,
             history: VecDeque::new(),
             table_state,
             connection_table_state,
@@ -106,21 +95,21 @@ impl Ui {
         use tui::text::Spans;
         use tui::widgets::Paragraph;
 
-        let item = self.history.back().expect("unreachable");
+        let stats = self.latest_stats();
         let paragraph = Paragraph::new(vec![
             Spans::from(format!(
                 "Update Time: {}",
-                item.time
+                chrono::DateTime::<chrono::Local>::from(stats.time)
                     .to_rfc3339_opts(chrono::SecondsFormat::Millis, false)
             )),
             Spans::from(format!(
                 "Connections: {:5} (filter={})",
-                item.stats.connection_count(),
+                stats.connection_count(),
                 self.options.connection_filter
             )),
             Spans::from(format!(
                 "Stats  Keys: {:5} (filter={})",
-                item.stats.item_count(),
+                stats.item_count(),
                 self.options.stats_key_filter
             )),
         ])
@@ -144,10 +133,9 @@ impl Ui {
     fn selected_item_chart(&self, selected: &str) -> Vec<(f64, f64)> {
         let mut items = Vec::new();
         let start = self.history[0].timestamp;
-        for history_item in &self.history {
-            let x = (history_item.timestamp - start).as_secs_f64();
-            if let Some(y) = history_item
-                .stats
+        for stats in &self.history {
+            let x = (stats.timestamp - start).as_secs_f64();
+            if let Some(y) = stats
                 .aggregated
                 .items
                 .get(selected)
@@ -176,13 +164,7 @@ impl Ui {
             .map(|h| Cell::from(h).style(Style::default().add_modifier(Modifier::BOLD)));
         let header = Row::new(header_cells).style(normal_style).bottom_margin(1);
 
-        let items = &self
-            .history
-            .back()
-            .expect("unreachable")
-            .stats
-            .aggregated
-            .items;
+        let items = &self.latest_stats().aggregated.items;
 
         // TODO: optimize
         let sum_width = items
@@ -238,10 +220,7 @@ impl Ui {
                 .split(area);
 
             let selected = self
-                .history
-                .back()
-                .expect("unreachable")
-                .stats
+                .latest_stats()
                 .aggregated
                 .items
                 .keys()
@@ -276,13 +255,13 @@ impl Ui {
             .data(&items)];
 
         // TODO;
-        let mut lower_bound = 0.0;
+        let mut lower_bound = 0.0; // TODO: min
         let mut upper_bound = items
             .iter()
             .map(|(_, y)| *y)
             .max_by(|y0, y1| y0.partial_cmp(&y1).unwrap())
-            .unwrap()
-            * 1.1;
+            .unwrap();
+        //* 1.1;
         upper_bound = upper_bound.ceil();
         if lower_bound == 0.0 && upper_bound == 0.0 {
             lower_bound = 0.0;
@@ -295,12 +274,13 @@ impl Ui {
                 Axis::default()
                     .labels(vec![
                         Span::from("0s"),
-                        Span::from(format!("{}s", self.opt.retention_period)),
+                        Span::from(format!("{}s", self.options.chart_time_period.get())),
                     ])
-                    .bounds([0.0, self.opt.retention_period]),
+                    .bounds([0.0, self.options.chart_time_period.get() as f64]),
             )
             .y_axis(
                 Axis::default()
+                    // TODO: format_u64
                     .labels(vec![Span::from("0"), Span::from(upper_bound.to_string())])
                     .bounds([lower_bound, upper_bound]),
             );
@@ -417,14 +397,10 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(rx: StatsReceiver, options: crate::Options) -> anyhow::Result<Self> {
-        let opt = UiOpts {
-            retention_period: options.chart_time_period.get() as f64,
-        };
-
+    pub fn new(rx: StatsReceiver, options: Options) -> anyhow::Result<Self> {
         let terminal = Self::setup_terminal()?;
         log::debug!("setup terminal");
-        let ui = Ui::new(opt, options);
+        let ui = Ui::new(options);
         Ok(Self { rx, ui, terminal })
     }
 
@@ -512,13 +488,12 @@ impl App {
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Ok(stats) => {
                 log::debug!("recv new stats");
-                self.ui.history.push_back(HistoryItem {
-                    timestamp: Instant::now(),
-                    time: Local::now(),
-                    stats,
-                });
+                let timestamp = stats.timestamp;
+                self.ui.history.push_back(stats);
                 while let Some(item) = self.ui.history.pop_front() {
-                    if item.timestamp.elapsed().as_secs_f64() < self.ui.opt.retention_period {
+                    if (timestamp - item.timestamp).as_secs()
+                        <= self.ui.options.chart_time_period.get() as u64
+                    {
                         self.ui.history.push_front(item);
                         break;
                     }
@@ -563,11 +538,4 @@ impl Drop for App {
             log::debug!("tear down terminal");
         }
     }
-}
-
-#[derive(Debug)]
-pub struct HistoryItem {
-    timestamp: Instant,    // TODO: delete(?)
-    time: DateTime<Local>, // TODO: delete
-    stats: Stats,
 }

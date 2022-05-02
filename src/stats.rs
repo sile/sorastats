@@ -1,7 +1,7 @@
 use anyhow::Context;
 use ordered_float::OrderedFloat;
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 pub type StatsItemKey = String;
 pub type ConnectionId = String;
@@ -138,6 +138,7 @@ impl AggregatedStats {
 #[derive(Debug, Clone)]
 pub struct Stats {
     pub time: SystemTime,
+    pub timestamp: Instant,
     pub aggregated: AggregatedStats,
     pub connections: BTreeMap<ConnectionId, ConnectionStats>,
 }
@@ -151,6 +152,7 @@ impl Stats {
             .collect();
         Self {
             time: SystemTime::now(),
+            timestamp: Instant::now(),
             aggregated,
             connections,
         }
@@ -159,6 +161,7 @@ impl Stats {
     pub fn empty() -> Self {
         Self {
             time: SystemTime::now(),
+            timestamp: Instant::now(),
             aggregated: Default::default(),
             connections: Default::default(),
         }
