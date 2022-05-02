@@ -1,110 +1,37 @@
-use crate::stats::{ConnectionStats, ConnectionStats2, Stats2};
+use crate::stats::{ConnectionStats2, Stats2};
+use crate::Options;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 const SORA_API_HEADER_NAME: &'static str = "x-sora-target";
 const SORA_API_HEADER_VALUE: &'static str = "Sora_20171101.GetStatsAllConnections";
 
-// TODO: delete
-#[derive(Debug, Clone, clap::Parser)]
-pub struct StatsPollingOptions {
-    pub sora_api_url: String,
+pub type StatsReceiver = mpsc::Receiver<Stats2>;
+pub type StatsSender = mpsc::Sender<Stats2>;
 
-    #[clap(long, default_value_t = 1.0)]
-    pub interval: f64, // TODO: NonZeroUsize
-
-    #[clap(long, short, default_value = ".*:.*")]
-    pub connection_filter: regex::Regex,
-
-    #[clap(long, short = 'k', default_value = ".*")]
-    pub stats_key_filter: regex::Regex,
+#[derive(Debug)]
+pub struct StatsPoller {
+    options: Options,
+    tx: StatsSender,
+    prev_request_time: Instant,
+    prev_stats: Stats2,
 }
 
-impl StatsPollingOptions {
-    pub fn new(options: crate::Options) -> Self {
-        Self {
-            sora_api_url: options.sora_api_url,
-            interval: options.polling_interval.get() as f64,
-            connection_filter: options.connection_filter,
-            stats_key_filter: options.stats_key_filter,
-        }
-    }
-
-    fn polling_interval(&self) -> Duration {
-        Duration::from_secs_f64(self.interval)
-    }
-
-    fn apply_filter(&self, connections: Vec<ConnectionStats>) -> Vec<ConnectionStats> {
-        connections
-            .into_iter()
-            .filter(|c| {
-                c.stats
-                    .iter()
-                    .any(|(k, v)| self.connection_filter.is_match(&format!("{}:{}", k, v)))
-            })
-            .map(|mut c| {
-                let stats = c
-                    .stats
-                    .into_iter()
-                    .filter(|(k, _v)| self.stats_key_filter.is_match(k))
-                    .collect();
-                c.stats = stats;
-                c
-            })
-            .collect()
-    }
-
-    fn apply_filter2(&self, connections: Vec<ConnectionStats2>) -> Vec<ConnectionStats2> {
-        connections
-            .into_iter()
-            .filter(|c| {
-                c.stats.iter().any(|(k, v)| {
-                    self.connection_filter
-                        .is_match(&format!("{}:{}", k, v.value))
-                })
-            })
-            .map(|mut c| {
-                let stats = c
-                    .stats
-                    .into_iter()
-                    .filter(|(k, _v)| self.stats_key_filter.is_match(k))
-                    .collect();
-                c.stats = stats;
-                c
-            })
-            .collect()
-    }
-}
-
-impl StatsPollingOptions {
-    pub fn start_polling_thread(&self) -> anyhow::Result<StatsReceiver> {
+impl StatsPoller {
+    pub fn start_thread(options: Options) -> anyhow::Result<StatsReceiver> {
         let (tx, rx) = mpsc::channel();
         let mut poller = StatsPoller {
-            opt: self.clone(),
+            options,
             tx,
-            last_request_time: Instant::now(),
-            prev: Stats2::empty(),
+            prev_request_time: Instant::now(),
+            prev_stats: Stats2::empty(),
         };
         poller.poll_once()?;
         std::thread::spawn(move || poller.run());
         Ok(rx)
     }
-}
 
-pub type StatsReceiver = mpsc::Receiver<Stats2>;
-
-type StatsSender = mpsc::Sender<Stats2>;
-
-#[derive(Debug)]
-pub struct StatsPoller {
-    opt: StatsPollingOptions,
-    tx: StatsSender,
-    last_request_time: Instant,
-    prev: Stats2,
-}
-
-impl StatsPoller {
-    pub fn run(mut self) {
+    fn run(mut self) {
         loop {
             match self.run_once() {
                 Err(e) => {
@@ -121,40 +48,56 @@ impl StatsPoller {
     }
 
     fn run_once(&mut self) -> anyhow::Result<bool> {
-        if let Some(duration) = self
-            .opt
-            .polling_interval()
-            .checked_sub(self.last_request_time.elapsed())
-        {
+        let polling_interval = Duration::from_secs(self.options.polling_interval.get() as u64);
+        if let Some(duration) = polling_interval.checked_sub(self.prev_request_time.elapsed()) {
             std::thread::sleep(duration);
         }
         self.poll_once()
     }
 
     fn poll_once(&mut self) -> anyhow::Result<bool> {
-        self.last_request_time = Instant::now();
-        let values: Vec<serde_json::Value> = ureq::post(&self.opt.sora_api_url)
+        self.prev_request_time = Instant::now();
+        let values: Vec<serde_json::Value> = ureq::post(&self.options.sora_api_url)
             .set(SORA_API_HEADER_NAME, SORA_API_HEADER_VALUE)
             .call()?
             .into_json()?;
         log::debug!(
             "HTTP POST {} {}:{} (elapsed: {:?}, connections: {})",
-            self.opt.sora_api_url,
+            self.options.sora_api_url,
             SORA_API_HEADER_NAME,
             SORA_API_HEADER_VALUE,
-            self.last_request_time.elapsed(),
+            self.prev_request_time.elapsed(),
             values.len()
         );
 
         let mut connections = Vec::new();
-        let mut connections2 = Vec::new();
         for value in values {
-            connections.push(ConnectionStats::from_json(value.clone())?);
-            connections2.push(ConnectionStats2::new(value, &self.prev)?);
+            connections.push(ConnectionStats2::new(value, &self.prev_stats)?);
         }
-        let _connections = self.opt.apply_filter(connections); // TODO: delete
-        let connections2 = self.opt.apply_filter2(connections2);
-        self.prev = Stats2::new(connections2);
-        Ok(self.tx.send(self.prev.clone()).is_ok())
+        let connections = self.apply_filters(connections);
+        self.prev_stats = Stats2::new(connections);
+        Ok(self.tx.send(self.prev_stats.clone()).is_ok())
+    }
+
+    fn apply_filters(&self, connections: Vec<ConnectionStats2>) -> Vec<ConnectionStats2> {
+        connections
+            .into_iter()
+            .filter(|c| {
+                c.stats.iter().any(|(k, v)| {
+                    self.options
+                        .connection_filter
+                        .is_match(&format!("{}:{}", k, v.value))
+                })
+            })
+            .map(|mut c| {
+                let stats = c
+                    .stats
+                    .into_iter()
+                    .filter(|(k, _v)| self.options.stats_key_filter.is_match(k))
+                    .collect();
+                c.stats = stats;
+                c
+            })
+            .collect()
     }
 }

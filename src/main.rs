@@ -25,7 +25,7 @@ fn main() -> anyhow::Result<()> {
 
     setup_logger(&args)?;
 
-    let rx = poll::StatsPollingOptions::new(args.options.clone()).start_polling_thread()?;
+    let rx = poll::StatsPoller::start_thread(args.options.clone())?;
     let app = ui::App::new(rx, args.options)?;
     app.run()
 }

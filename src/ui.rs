@@ -1,5 +1,6 @@
-use crate::poll::{StatsPollingOptions, StatsReceiver};
+use crate::poll::StatsReceiver;
 use crate::stats::Stats2;
+use crate::Options;
 use chrono::{DateTime, Local};
 use clap::Parser;
 use std::collections::VecDeque;
@@ -25,12 +26,12 @@ type Frame<'a> = tui::Frame<'a, tui::backend::CrosstermBackend<std::io::Stdout>>
 // TODO: rename
 #[derive(Debug)]
 pub struct Ui {
+    options: Options,
     opt: UiOpts,
     history: VecDeque<HistoryItem>,
     table_state: tui::widgets::TableState, // TODO: rename
     connection_table_state: tui::widgets::TableState, // TODO: rename
     focus: Focus,
-    stats_opt: StatsPollingOptions, // TODO
 }
 
 impl Ui {
@@ -38,7 +39,7 @@ impl Ui {
         &self.history.back().expect("unreachable").stats
     }
 
-    fn new(opt: UiOpts, stats_opt: StatsPollingOptions) -> Self {
+    fn new(opt: UiOpts, options: Options) -> Self {
         let mut table_state = tui::widgets::TableState::default();
         table_state.select(Some(0));
 
@@ -46,8 +47,8 @@ impl Ui {
         connection_table_state.select(Some(0));
 
         Self {
+            options,
             opt,
-            stats_opt,
             history: VecDeque::new(),
             table_state,
             connection_table_state,
@@ -115,12 +116,12 @@ impl Ui {
             Spans::from(format!(
                 "Connections: {:5} (filter={})",
                 item.stats.connection_count(),
-                self.stats_opt.connection_filter
+                self.options.connection_filter
             )),
             Spans::from(format!(
                 "Stats  Keys: {:5} (filter={})",
                 item.stats.item_count(),
-                self.stats_opt.stats_key_filter
+                self.options.stats_key_filter
             )),
         ])
         .block(self.make_block("Status", None))
@@ -420,11 +421,10 @@ impl App {
         let opt = UiOpts {
             retention_period: options.chart_time_period.get() as f64,
         };
-        let stats_opt = StatsPollingOptions::new(options);
 
         let terminal = Self::setup_terminal()?;
         log::debug!("setup terminal");
-        let ui = Ui::new(opt, stats_opt);
+        let ui = Ui::new(opt, options);
         Ok(Self { rx, ui, terminal })
     }
 
