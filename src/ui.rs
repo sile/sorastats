@@ -1,4 +1,4 @@
-use crate::poller::{StatsPollingOptions, StatsReceiver};
+use crate::poll::{StatsPollingOptions, StatsReceiver};
 use crate::stats::Stats2;
 use chrono::{DateTime, Local};
 use clap::Parser;
@@ -275,13 +275,7 @@ impl Ui {
             .data(&items)];
 
         // TODO;
-        let mut lower_bound = 0.0; // items
-                                   // .iter()
-                                   // .map(|(_, y)| *y)
-                                   // .min_by(|y0, y1| y0.partial_cmp(&y1).unwrap())
-                                   // .unwrap()
-                                   // * 0.9;
-
+        let mut lower_bound = 0.0;
         let mut upper_bound = items
             .iter()
             .map(|(_, y)| *y)

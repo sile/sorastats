@@ -1,13 +1,13 @@
 use anyhow::Context;
 use clap::Parser;
-use sorastats::{poller, ui};
+use sorastats::{poll, ui};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
 #[clap(version)]
 struct Args {
     #[clap(flatten)]
-    polling: poller::StatsPollingOptions,
+    polling: poll::StatsPollingOptions,
 
     #[clap(flatten)]
     ui: ui::UiOpts,
