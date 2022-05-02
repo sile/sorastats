@@ -3,7 +3,7 @@ use clap::Parser;
 use sorastats::{poll, ui};
 use std::path::PathBuf;
 
-/// WebRTC SFU Sora の統計情報のコマンドラインビューア
+/// WebRTC SFU Sora の統計情報ビューア
 #[derive(Debug, Parser)]
 #[clap(version)]
 struct Args {
