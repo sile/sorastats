@@ -138,50 +138,23 @@ impl Ui {
         self.draw_detailed_stats(f, chunks[1]);
     }
 
-    fn selected_item_chart(&self, _selected: &str) -> Vec<(f64, f64)> {
-        // TODO
-        // let mut items = Vec::new();
-        // let start = self.history[0].timestamp; // TODO
-        // for history_item in &self.history {
-        //     let x = (history_item.timestamp - start).as_secs_f64();
-        //     let mut y = 0.0;
-        //     for conn in &self.history.back().expect("unreachable").connections {
-        //         for (k, v) in &conn.stats {
-        //             if let StatsValue::Number(v) = v {
-        //                 if *k == selected.key {
-        //                     y += v.0;
-        //                     break;
-        //                 }
-        //             }
-        //         }
-        //     }
-        //     items.push((x, y));
-        // }
-        // items // TODO: use delta instead of sum
-        Vec::new()
+    fn selected_item_chart(&self, selected: &str) -> Vec<(f64, f64)> {
+        let mut items = Vec::new();
+        let start = self.history[0].timestamp;
+        for history_item in &self.history {
+            let x = (history_item.timestamp - start).as_secs_f64();
+            if let Some(y) = history_item
+                .stats
+                .aggregated
+                .stats
+                .get(selected)
+                .and_then(|x| x.delta_per_sec)
+            {
+                items.push((x, y));
+            }
+        }
+        items
     }
-
-    // TODO: delete
-    // fn selected_item_values(&self, selected: &str) -> Vec<(String, String)> {
-    //     let mut items = Vec::new();
-    //     for conn in self
-    //         .history
-    //         .back()
-    //         .expect("unreachable")
-    //         .stats
-    //         .connections
-    //         .values()
-    //     {
-    //         for (k, v) in &conn.stats {
-    //             if k == selected {
-    //                 items.push((conn.connection_id.clone(), v.value.to_string()));
-    //                 break;
-    //             }
-    //         }
-    //     }
-    //     // TODO: sort
-    //     items
-    // }
 
     fn draw_aggregated_stats(&mut self, f: &mut Frame, area: tui::layout::Rect) {
         use tui::layout::Constraint;
@@ -273,9 +246,7 @@ impl Ui {
                 .expect("TODO: range check")
                 .to_owned();
             self.draw_selected_stats(f, chunks[0], &selected);
-            if false {
-                self.draw_chart(f, chunks[1], &selected);
-            }
+            self.draw_chart(f, chunks[1], &selected);
         } else {
             let block = Block::default()
                 .borders(Borders::ALL)
@@ -285,73 +256,56 @@ impl Ui {
     }
 
     fn draw_chart(&mut self, f: &mut Frame, area: tui::layout::Rect, selected: &str) {
-        use tui::style::{Color, Modifier, Style};
         use tui::symbols::Marker;
         use tui::text::Span;
-        use tui::widgets::{Axis, Block, Borders, Chart, Dataset, GraphType};
+        use tui::widgets::{Axis, Chart, Dataset, GraphType};
+        // TODO: Support individual chart
 
         let items = self.selected_item_chart(selected);
+        if items.is_empty() {
+            f.render_widget(self.make_block("Delta/s Chart", None), area);
+            return;
+        }
 
-        // TODO: add average
         let datasets = vec![Dataset::default()
-            // .name(ty)
             .marker(Marker::Braille)
             .graph_type(GraphType::Line)
             .data(&items)];
 
+        // TODO;
+        let mut lower_bound = 0.0; // items
+                                   // .iter()
+                                   // .map(|(_, y)| *y)
+                                   // .min_by(|y0, y1| y0.partial_cmp(&y1).unwrap())
+                                   // .unwrap()
+                                   // * 0.9;
+
+        let mut upper_bound = items
+            .iter()
+            .map(|(_, y)| *y)
+            .max_by(|y0, y1| y0.partial_cmp(&y1).unwrap())
+            .unwrap()
+            * 1.1;
+        upper_bound = upper_bound.ceil();
+        if lower_bound == 0.0 && upper_bound == 0.0 {
+            lower_bound = 0.0;
+            upper_bound = 1.0;
+        }
+
         let chart = Chart::new(datasets)
-            .block(
-                Block::default()
-                    .title(Span::styled(
-                        "Chart",
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ))
-                    .borders(Borders::ALL),
-            )
+            .block(self.make_block("Delta/s Chart", None))
             .x_axis(
                 Axis::default()
-                    .title(format!(
-                        "Time (duration: {} seconds)",
-                        self.opt.retention_period
-                    ))
-                    .style(Style::default().fg(Color::Gray))
+                    .labels(vec![
+                        Span::from("0s"),
+                        Span::from(format!("{}s", self.opt.retention_period)),
+                    ])
                     .bounds([0.0, self.opt.retention_period]),
             )
             .y_axis(
                 Axis::default()
-                    .style(Style::default().fg(Color::Gray))
-                    // TODO
-                    // .labels(vec![
-                    //     tui::text::Span::styled(
-                    //         "0",
-                    //         tui::style::Style::default().add_modifier(tui::style::Modifier::BOLD),
-                    //     ),
-                    //     tui::text::Span::styled(
-                    //         "50",
-                    //         tui::style::Style::default().add_modifier(tui::style::Modifier::BOLD),
-                    //     ),
-                    //     tui::text::Span::styled(
-                    //         "100",
-                    //         tui::style::Style::default().add_modifier(tui::style::Modifier::BOLD),
-                    //     ),
-                    // ])
-                    .bounds([
-                        // TODO
-                        items
-                            .iter()
-                            .map(|(_, y)| *y)
-                            .min_by(|y0, y1| y0.partial_cmp(&y1).unwrap())
-                            .unwrap()
-                            * 0.99,
-                        items
-                            .iter()
-                            .map(|(_, y)| *y)
-                            .max_by(|y0, y1| y0.partial_cmp(&y1).unwrap())
-                            .unwrap()
-                            * 1.01,
-                    ]),
+                    .labels(vec![Span::from("0"), Span::from(upper_bound.to_string())])
+                    .bounds([lower_bound, upper_bound]),
             );
         f.render_widget(chart, area);
     }
