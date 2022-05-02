@@ -44,9 +44,7 @@ $ sorastats
 使い方
 ------
 
-### 基本的な使い方
-
-第一引数に Sora の API の URL を指定して実行してください:
+第一引数に Sora の API の URL を指定してコマンドを実行してください:
 
 ```console
 $ sorastats ${SORA_API_URL}
