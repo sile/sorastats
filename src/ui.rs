@@ -35,15 +35,26 @@ impl App {
             if self.handle_event()? {
                 break;
             }
-            self.handle_stats_poll()?;
+            if self.ui.pause {
+                std::thread::sleep(self.recv_timeout());
+            } else {
+                self.handle_stats_poll()?;
+            }
         }
         Ok(())
+    }
+
+    fn recv_timeout(&self) -> Duration {
+        Duration::from_millis(10)
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         match key.code {
             KeyCode::Char('q') => {
                 return Ok(true);
+            }
+            KeyCode::Char('p') => {
+                self.ui.pause = !self.ui.pause;
             }
             KeyCode::Left => {
                 self.ui.focus = Focus::AggregatedStats;
@@ -99,7 +110,7 @@ impl App {
     }
 
     fn handle_stats_poll(&mut self) -> anyhow::Result<()> {
-        match self.rx.recv_timeout(Duration::from_millis(10)) {
+        match self.rx.recv_timeout(self.recv_timeout()) {
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 anyhow::bail!("Sora stats polling thread terminated unexpectedly");
             }
@@ -166,6 +177,7 @@ struct UiState {
     aggregated_table_state: TableState,
     individual_table_state: TableState,
     focus: Focus,
+    pause: bool,
 }
 
 impl UiState {
@@ -176,6 +188,7 @@ impl UiState {
             aggregated_table_state: TableState::default(),
             individual_table_state: TableState::default(),
             focus: Focus::AggregatedStats,
+            pause: false,
         }
     }
 
@@ -204,6 +217,12 @@ impl UiState {
     }
 
     fn render_status(&mut self, f: &mut Frame, area: tui::layout::Rect) {
+        let block = if self.pause {
+            self.make_block("Status (PAUSED)", None)
+        } else {
+            self.make_block("Status", None)
+        };
+
         let stats = self.latest_stats();
         let paragraph = Paragraph::new(vec![
             Spans::from(format!(
@@ -222,15 +241,16 @@ impl UiState {
                 self.options.stats_key_filter
             )),
         ])
-        .block(self.make_block("Status", None))
+        .block(block)
         .alignment(Alignment::Left);
         f.render_widget(paragraph, area);
     }
 
     fn render_help(&mut self, f: &mut Frame, area: tui::layout::Rect) {
         let paragraph = Paragraph::new(vec![
-            Spans::from("Quit: 'q' key"),
-            Spans::from("Move: UP / DOWN / LEFT / RIGHT keys"),
+            Spans::from("Quit:           'q' key"),
+            Spans::from("Pause / Resume: 'p' key"),
+            Spans::from("Move:           UP / DOWN / LEFT / RIGHT keys"),
         ])
         .block(self.make_block("Help", None))
         .alignment(Alignment::Left);
