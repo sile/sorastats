@@ -54,7 +54,7 @@ impl AggregatedStatsItemValue {
     }
 }
 
-fn format_u64(mut n: u64) -> String {
+pub fn format_u64(mut n: u64) -> String {
     let mut s = Vec::new();
     for i in 0.. {
         if i % 3 == 0 && i != 0 {
@@ -210,7 +210,8 @@ impl ConnectionStats {
         let duration = prev
             .connections
             .get(&connection_id)
-            .map(|c| (timestamp - c.timestamp).to_std().expect("TODO"));
+            .map(|c| (timestamp - c.timestamp).to_std())
+            .transpose()?;
         let items = stats_items
             .into_iter()
             .map(|(k, v)| {

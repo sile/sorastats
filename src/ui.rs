@@ -1,13 +1,17 @@
 use crate::poll::StatsReceiver;
-use crate::stats::Stats;
+use crate::stats::{format_u64, Stats};
 use crate::Options;
 use crossterm::event::{KeyCode, KeyEvent};
+use ordered_float::OrderedFloat;
 use std::collections::VecDeque;
 use std::time::Duration;
 use tui::layout::{Alignment, Constraint, Direction, Layout};
 use tui::style::{Modifier, Style};
+use tui::symbols::Marker;
 use tui::text::{Span, Spans};
-use tui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
+use tui::widgets::{
+    Axis, Block, Borders, Cell, Chart, Dataset, GraphType, Paragraph, Row, Table, TableState,
+};
 
 type Terminal = tui::Terminal<tui::backend::CrosstermBackend<std::io::Stdout>>;
 type Frame<'a> = tui::Frame<'a, tui::backend::CrosstermBackend<std::io::Stdout>>;
@@ -305,22 +309,24 @@ impl UiState {
     }
 
     fn render_individual_stats(&mut self, f: &mut Frame, area: tui::layout::Rect) {
-        let mut rows = Vec::new();
+        let selected_key = self.selected_item_key();
+
+        let mut row_items = Vec::with_capacity(self.latest_stats().connection_count());
         let mut value_width = 0;
         let mut delta_width = 0;
         let mut is_value_num = true;
-        for conn in self.latest_stats().connections.values() {
-            if let Some((_, item)) = conn.items.iter().find(|(k, _)| *k == selected) {
+        for connection in self.latest_stats().connections.values() {
+            if let Some(item) = selected_key.and_then(|k| connection.items.get(k)) {
                 let value = item.format_value();
                 let delta = item.format_delta_per_sec();
                 is_value_num &= item.value.as_f64().is_some();
                 value_width = std::cmp::max(value_width, value.len());
                 delta_width = std::cmp::max(delta_width, delta.len());
-                rows.push((conn.connection_id.clone(), value, delta));
+                row_items.push((connection.connection_id.clone(), value, delta));
             }
         }
 
-        let rows = rows.into_iter().map(|(connection_id, value, delta)| {
+        let rows = row_items.into_iter().map(|(connection_id, value, delta)| {
             if is_value_num {
                 Row::new(vec![
                     Cell::from(connection_id),
@@ -332,13 +338,6 @@ impl UiState {
             }
         });
 
-        let selected_style = if self.focus == Focus::IndividualStats {
-            Style::default().add_modifier(Modifier::REVERSED)
-        } else {
-            Style::default()
-        };
-        let normal_style = Style::default();
-
         let header_cells = if is_value_num {
             &["Connection ID", "Value", "Delta/s"][..]
         } else {
@@ -346,10 +345,7 @@ impl UiState {
         }
         .into_iter()
         .map(|&h| Cell::from(h).style(Style::default().add_modifier(Modifier::BOLD)));
-        let header = Row::new(header_cells)
-            .style(normal_style)
-            .height(1)
-            .bottom_margin(1);
+        let header = Row::new(header_cells).bottom_margin(1);
 
         let widths = if is_value_num {
             vec![
@@ -361,98 +357,175 @@ impl UiState {
             vec![Constraint::Percentage(40), Constraint::Percentage(60)]
         };
 
-        let highlight_symbol = if self.focus == Focus::AggregatedStats {
-            format!(
-                "{:>width$}  ",
-                "",
-                width = (self.latest_stats().connection_count()).to_string().len()
-            )
+        let highlight_style = if self.focus == Focus::IndividualStats {
+            Style::default().add_modifier(Modifier::REVERSED)
         } else {
+            Style::default()
+        };
+
+        let cursor_width = (self.latest_stats().connection_count()).to_string().len();
+        let highlight_symbol = if self.focus == Focus::IndividualStats {
             format!(
                 "{:>width$}> ",
                 self.individual_table_state.selected().unwrap_or(0) + 1,
-                width = (self.latest_stats().connection_count()).to_string().len()
+                width = cursor_width
             )
+        } else {
+            format!("{:>width$}  ", "", width = cursor_width)
         };
 
-        let t = Table::new(rows)
+        let table = Table::new(rows)
             .header(header)
             .block(self.make_block(
-                &format!("Values of {:?}", selected),
+                &format!("Values of {:?}", selected_key.unwrap_or("")),
                 Some(Focus::IndividualStats),
             ))
-            .highlight_style(selected_style)
+            .highlight_style(highlight_style)
             .highlight_symbol(&highlight_symbol)
             .widths(&widths);
-        f.render_stateful_widget(t, area, &mut self.individual_table_state);
+        f.render_stateful_widget(table, area, &mut self.individual_table_state);
     }
 
     fn render_chart(&mut self, f: &mut Frame, area: tui::layout::Rect) {
-        use tui::symbols::Marker;
-        use tui::widgets::{Axis, Chart, Dataset, GraphType};
-        // TODO: Support individual chart
+        let block = match (self.selected_item_key(), self.selected_connection_id()) {
+            (Some(key), Some(id)) => {
+                self.make_block(&format!("Delta/s Chart of {:?} ({})", key, id), None)
+            }
+            (Some(key), _) => self.make_block(&format!("Delta/s Chart of {:?}", key), None),
+            _ => self.make_block("Delta/s Chart", None),
+        };
 
-        let selected = "TODO"; // TODO: remove
-
-        let items = self.selected_item_chart(selected);
-        if items.is_empty() {
-            f.render_widget(self.make_block("Delta/s Chart", None), area);
+        let data = self.chart_data();
+        if data.is_empty() {
+            f.render_widget(block, area);
             return;
         }
 
         let datasets = vec![Dataset::default()
             .marker(Marker::Braille)
             .graph_type(GraphType::Line)
-            .data(&items)];
+            .data(&data)];
 
-        // TODO;
-        let mut lower_bound = 0.0; // TODO: min
-        let mut upper_bound = items
+        let lower_bound = data
             .iter()
-            .map(|(_, y)| *y)
-            .max_by(|y0, y1| y0.partial_cmp(&y1).unwrap())
-            .unwrap();
-        //* 1.1;
-        upper_bound = upper_bound.ceil();
-        if lower_bound == 0.0 && upper_bound == 0.0 {
-            lower_bound = 0.0;
-            upper_bound = 1.0;
+            .map(|(_, y)| OrderedFloat(*y))
+            .min()
+            .map(|y| y.0)
+            .expect("unreachable")
+            .floor();
+        let mut upper_bound = data
+            .iter()
+            .map(|(_, y)| OrderedFloat(*y))
+            .max()
+            .map(|y| y.0)
+            .expect("unreachable")
+            .ceil();
+        let is_constant = lower_bound == upper_bound;
+        if is_constant {
+            upper_bound = lower_bound + 1.0;
         }
 
+        let x_max = self.options.chart_time_period.get();
+        let y_labels = if is_constant {
+            vec![Span::from(format_u64(lower_bound as u64)), Span::from("")]
+        } else {
+            vec![
+                Span::from(format_u64(lower_bound as u64)),
+                Span::from(format_u64(upper_bound as u64)),
+            ]
+        };
+
         let chart = Chart::new(datasets)
-            .block(self.make_block("Delta/s Chart", None))
+            .block(block)
             .x_axis(
                 Axis::default()
-                    .labels(vec![
-                        Span::from("0s"),
-                        Span::from(format!("{}s", self.options.chart_time_period.get())),
-                    ])
-                    .bounds([0.0, self.options.chart_time_period.get() as f64]),
+                    .labels(vec![Span::from("0s"), Span::from(format!("{}s", x_max))])
+                    .bounds([0.0, x_max as f64]),
             )
             .y_axis(
                 Axis::default()
-                    // TODO: format_u64
-                    .labels(vec![Span::from("0"), Span::from(upper_bound.to_string())])
+                    .labels(y_labels)
                     .bounds([lower_bound, upper_bound]),
             );
         f.render_widget(chart, area);
     }
 
-    fn selected_item_chart(&self, selected: &str) -> Vec<(f64, f64)> {
-        let mut items = Vec::new();
+    fn chart_data(&self) -> Vec<(f64, f64)> {
+        match self.focus {
+            Focus::AggregatedStats => self.aggregated_chart_data(),
+            Focus::IndividualStats => self.individual_chart_data(),
+        }
+    }
+
+    fn individual_chart_data(&self) -> Vec<(f64, f64)> {
+        let (key, id) = if let (Some(key), Some(id)) =
+            (self.selected_item_key(), self.selected_connection_id())
+        {
+            (key, id)
+        } else {
+            return Vec::new();
+        };
+
         let start = self.history[0].timestamp;
-        for stats in &self.history {
-            let x = (stats.timestamp - start).as_secs_f64();
-            if let Some(y) = stats
+        self.history
+            .iter()
+            .filter_map(|stats| {
+                let x = (stats.timestamp - start).as_secs_f64();
+                stats
+                    .connections
+                    .get(id)
+                    .and_then(|c| c.items.get(key))
+                    .and_then(|y| y.delta_per_sec)
+                    .map(|y| (x, y))
+            })
+            .collect()
+    }
+
+    fn aggregated_chart_data(&self) -> Vec<(f64, f64)> {
+        let key = if let Some(key) = self.selected_item_key() {
+            key
+        } else {
+            return Vec::new();
+        };
+
+        let start = self.history[0].timestamp;
+        self.history
+            .iter()
+            .filter_map(|stats| {
+                let x = (stats.timestamp - start).as_secs_f64();
+                stats
+                    .aggregated
+                    .items
+                    .get(key)
+                    .and_then(|y| y.delta_per_sec)
+                    .map(|y| (x, y))
+            })
+            .collect()
+    }
+
+    fn selected_item_key(&self) -> Option<&str> {
+        self.aggregated_table_state.selected().and_then(|i| {
+            self.latest_stats()
                 .aggregated
                 .items
-                .get(selected)
-                .and_then(|x| x.delta_per_sec)
-            {
-                items.push((x, y));
-            }
+                .iter()
+                .nth(i)
+                .map(|(k, _)| k.as_str())
+        })
+    }
+
+    fn selected_connection_id(&self) -> Option<&str> {
+        if self.focus == Focus::AggregatedStats {
+            return None;
         }
-        items
+
+        self.individual_table_state.selected().and_then(|i| {
+            self.latest_stats()
+                .connections
+                .iter()
+                .nth(i)
+                .map(|(k, _)| k.as_str())
+        })
     }
 
     fn make_block(&self, name: &str, block: Option<Focus>) -> tui::widgets::Block<'static> {
