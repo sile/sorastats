@@ -416,11 +416,12 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(
-        rx: StatsReceiver,
-        opt: UiOpts,
-        stats_opt: StatsPollingOptions,
-    ) -> anyhow::Result<Self> {
+    pub fn new(rx: StatsReceiver, options: crate::Options) -> anyhow::Result<Self> {
+        let opt = UiOpts {
+            retention_period: options.chart_time_period.get() as f64,
+        };
+        let stats_opt = StatsPollingOptions::new(options);
+
         let terminal = Self::setup_terminal()?;
         log::debug!("setup terminal");
         let ui = Ui::new(opt, stats_opt);

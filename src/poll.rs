@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 const SORA_API_HEADER_NAME: &'static str = "x-sora-target";
 const SORA_API_HEADER_VALUE: &'static str = "Sora_20171101.GetStatsAllConnections";
 
+// TODO: delete
 #[derive(Debug, Clone, clap::Parser)]
 pub struct StatsPollingOptions {
     pub sora_api_url: String,
@@ -20,6 +21,15 @@ pub struct StatsPollingOptions {
 }
 
 impl StatsPollingOptions {
+    pub fn new(options: crate::Options) -> Self {
+        Self {
+            sora_api_url: options.sora_api_url,
+            interval: options.polling_interval.get() as f64,
+            connection_filter: options.connection_filter,
+            stats_key_filter: options.stats_key_filter,
+        }
+    }
+
     fn polling_interval(&self) -> Duration {
         Duration::from_secs_f64(self.interval)
     }
@@ -86,7 +96,7 @@ pub type StatsReceiver = mpsc::Receiver<Stats2>;
 type StatsSender = mpsc::Sender<Stats2>;
 
 #[derive(Debug)]
-struct StatsPoller {
+pub struct StatsPoller {
     opt: StatsPollingOptions,
     tx: StatsSender,
     last_request_time: Instant,

@@ -3,22 +3,20 @@ use clap::Parser;
 use sorastats::{poll, ui};
 use std::path::PathBuf;
 
+/// WebRTC SFU Sora の統計情報のコマンドラインビューア
 #[derive(Debug, Parser)]
 #[clap(version)]
 struct Args {
     #[clap(flatten)]
-    polling: poll::StatsPollingOptions,
+    options: sorastats::Options,
 
-    #[clap(flatten)]
-    ui: ui::UiOpts,
-
-    #[clap(long)]
+    #[clap(hide = true, long)]
     logfile: Option<PathBuf>,
 
-    #[clap(long, default_value_t = simplelog::LevelFilter::Info, possible_values = ["DEBUG", "INFO", "WARN", "ERROR"])]
+    #[clap(hide = true,long, default_value_t = simplelog::LevelFilter::Info)]
     loglevel: simplelog::LevelFilter,
 
-    #[clap(long)]
+    #[clap(hide = true, long)]
     truncate_log: bool,
 }
 
@@ -27,8 +25,8 @@ fn main() -> anyhow::Result<()> {
 
     setup_logger(&args)?;
 
-    let rx = args.polling.start_polling_thread()?;
-    let app = ui::App::new(rx, args.ui, args.polling)?;
+    let rx = poll::StatsPollingOptions::new(args.options.clone()).start_polling_thread()?;
+    let app = ui::App::new(rx, args.options)?;
     app.run()
 }
 
