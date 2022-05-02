@@ -1,4 +1,4 @@
-use crate::poller::StatsReceiver;
+use crate::poller::{StatsPollingOptions, StatsReceiver};
 use crate::stats::Stats2;
 use chrono::{DateTime, Local};
 use clap::Parser;
@@ -30,6 +30,7 @@ pub struct Ui {
     table_state: tui::widgets::TableState, // TODO: rename
     connection_table_state: tui::widgets::TableState, // TODO: rename
     focus: Focus,
+    stats_opt: StatsPollingOptions, // TODO
 }
 
 impl Ui {
@@ -37,7 +38,7 @@ impl Ui {
         &self.history.back().expect("unreachable").stats
     }
 
-    fn new(opt: UiOpts) -> Self {
+    fn new(opt: UiOpts, stats_opt: StatsPollingOptions) -> Self {
         let mut table_state = tui::widgets::TableState::default();
         table_state.select(Some(0));
 
@@ -46,6 +47,7 @@ impl Ui {
 
         Self {
             opt,
+            stats_opt,
             history: VecDeque::new(),
             table_state,
             connection_table_state,
@@ -113,12 +115,12 @@ impl Ui {
             Spans::from(format!(
                 "Connections: {:5} (filter={})",
                 item.stats.connection_count(),
-                "TODO" // self.opt.connection_filter
+                self.stats_opt.connection_filter
             )),
             Spans::from(format!(
                 "Stats  Keys: {:5} (filter={})",
                 item.stats.item_count(),
-                "TODO" //self.opt.stats_key_filter
+                self.stats_opt.stats_key_filter
             )),
         ])
         .block(self.make_block("Status", None))
@@ -420,10 +422,14 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(rx: StatsReceiver, opt: UiOpts) -> anyhow::Result<Self> {
+    pub fn new(
+        rx: StatsReceiver,
+        opt: UiOpts,
+        stats_opt: StatsPollingOptions,
+    ) -> anyhow::Result<Self> {
         let terminal = Self::setup_terminal()?;
         log::debug!("setup terminal");
-        let ui = Ui::new(opt);
+        let ui = Ui::new(opt, stats_opt);
         Ok(Self { rx, ui, terminal })
     }
 
