@@ -5,6 +5,12 @@ use clap::Parser;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Focus {
+    AggregatedStats,
+    ConnectionStats,
+}
+
 #[derive(Debug, Parser)]
 pub struct UiOpts {
     // TODO: rename
@@ -21,7 +27,9 @@ type Frame<'a> = tui::Frame<'a, tui::backend::CrosstermBackend<std::io::Stdout>>
 pub struct Ui {
     opt: UiOpts,
     history: VecDeque<HistoryItem>,
-    table_state: tui::widgets::TableState,
+    table_state: tui::widgets::TableState, // TODO: rename
+    connection_table_state: tui::widgets::TableState, // TODO: rename
+    focus: Focus,
 }
 
 impl Ui {
@@ -32,10 +40,16 @@ impl Ui {
     fn new(opt: UiOpts) -> Self {
         let mut table_state = tui::widgets::TableState::default();
         table_state.select(Some(0));
+
+        let mut connection_table_state = tui::widgets::TableState::default();
+        connection_table_state.select(Some(0));
+
         Self {
             opt,
             history: VecDeque::new(),
             table_state,
+            connection_table_state,
+            focus: Focus::AggregatedStats,
         }
     }
 
@@ -63,15 +77,25 @@ impl Ui {
         self.draw_help(f, chunks[1]);
     }
 
-    fn make_block(&self, name: &'static str) -> tui::widgets::Block<'static> {
+    fn make_block(&self, name: &str, block: Option<Focus>) -> tui::widgets::Block<'static> {
         use tui::style::{Modifier, Style};
         use tui::text::Span;
         use tui::widgets::{Block, Borders};
 
-        Block::default().borders(Borders::ALL).title(Span::styled(
-            name,
-            Style::default().add_modifier(Modifier::BOLD),
-        ))
+        if block == Some(self.focus) {
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled(
+                    name.to_string(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ))
+                .border_style(Style::default().add_modifier(Modifier::BOLD))
+        } else {
+            Block::default().borders(Borders::ALL).title(Span::styled(
+                name.to_string(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ))
+        }
     }
 
     fn render_status(&mut self, f: &mut Frame, area: tui::layout::Rect) {
@@ -97,7 +121,7 @@ impl Ui {
                 "TODO" //self.opt.stats_key_filter
             )),
         ])
-        .block(self.make_block("Status"))
+        .block(self.make_block("Status", None))
         .alignment(Alignment::Left);
         f.render_widget(paragraph, area);
     }
@@ -164,7 +188,11 @@ impl Ui {
         use tui::style::{Modifier, Style};
         use tui::widgets::{Cell, Row, Table};
 
-        let selected_style = Style::default().add_modifier(Modifier::REVERSED);
+        let selected_style = if self.focus == Focus::AggregatedStats {
+            Style::default().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default()
+        };
         let normal_style = Style::default();
 
         let header_cells = ["Key", "Sum", "Delta/s"]
@@ -215,7 +243,7 @@ impl Ui {
 
         let t = Table::new(rows)
             .header(header)
-            .block(self.make_block("Aggregated Stats"))
+            .block(self.make_block("Aggregated Stats", Some(Focus::AggregatedStats)))
             .highlight_style(selected_style)
             .highlight_symbol(&highlight_symbol)
             .widths(&widths);
@@ -331,7 +359,7 @@ impl Ui {
     fn draw_selected_stats(&mut self, f: &mut Frame, area: tui::layout::Rect, selected: &str) {
         use tui::layout::Constraint;
         use tui::style::{Modifier, Style};
-        use tui::widgets::{Block, Borders, Cell, Row, Table};
+        use tui::widgets::{Cell, Row, Table};
 
         let mut rows = Vec::new();
         let mut value_width = 0;
@@ -360,7 +388,11 @@ impl Ui {
             }
         });
 
-        let selected_style = Style::default().add_modifier(Modifier::REVERSED);
+        let selected_style = if self.focus == Focus::ConnectionStats {
+            Style::default().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default()
+        };
         let normal_style = Style::default();
 
         let header_cells = if is_value_num {
@@ -375,10 +407,6 @@ impl Ui {
             .height(1)
             .bottom_margin(1);
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(format!("Values of {:?}", selected));
-
         let widths = if is_value_num {
             vec![
                 Constraint::Percentage(50),
@@ -389,14 +417,30 @@ impl Ui {
             vec![Constraint::Percentage(50), Constraint::Percentage(50)]
         };
 
+        let highlight_symbol = if self.focus == Focus::AggregatedStats {
+            format!(
+                "{:>width$}  ",
+                "",
+                width = (self.latest_stats().connection_count()).to_string().len()
+            )
+        } else {
+            format!(
+                "{:>width$}> ",
+                self.connection_table_state.selected().unwrap_or(0) + 1,
+                width = (self.latest_stats().connection_count()).to_string().len()
+            )
+        };
+
         let t = Table::new(rows)
             .header(header)
-            .block(block)
+            .block(self.make_block(
+                &format!("Values of {:?}", selected),
+                Some(Focus::ConnectionStats),
+            ))
             .highlight_style(selected_style)
-            .highlight_symbol(">> ")
+            .highlight_symbol(&highlight_symbol)
             .widths(&widths);
-        let mut state = Default::default(); // TODO
-        f.render_stateful_widget(t, area, &mut state);
+        f.render_stateful_widget(t, area, &mut self.connection_table_state);
     }
 
     // TODO: rename
@@ -409,7 +453,7 @@ impl Ui {
             Spans::from("Quit: 'q' key"),
             Spans::from("Move: UP / DOWN / LEFT / RIGHT keys"),
         ])
-        .block(self.make_block("Help"))
+        .block(self.make_block("Help", None))
         .alignment(Alignment::Left);
         f.render_widget(paragraph, area);
     }
@@ -448,39 +492,54 @@ impl App {
                     KeyCode::Char('q') => {
                         return Ok(true);
                     }
-                    // KeyCode::Right => {
-                    //     let tab_index =
-                    //         std::cmp::min(self.ui.tab_index + 1, self.ui.opt.tab.len() - 1);
-                    //     if tab_index != self.ui.tab_index {
-                    //         self.ui.tab_index = tab_index;
-                    //         self.terminal.draw(|f| self.ui.draw(f))?;
-                    //     }
-                    // }
-                    // KeyCode::Left => {
-                    //     let tab_index = self.ui.tab_index.saturating_sub(1);
-                    //     if tab_index != self.ui.tab_index {
-                    //         self.ui.tab_index = tab_index;
-                    //         self.terminal.draw(|f| self.ui.draw(f))?;
-                    //     }
-                    // }
+                    KeyCode::Left => {
+                        self.ui.focus = Focus::AggregatedStats;
+                        self.terminal.draw(|f| self.ui.draw(f))?;
+                    }
+                    KeyCode::Right => {
+                        self.ui.focus = Focus::ConnectionStats;
+                        self.terminal.draw(|f| self.ui.draw(f))?;
+                    }
+
                     KeyCode::Up => {
                         // TODO: zero items check
-                        let i = if let Some(i) = self.ui.table_state.selected() {
+                        let table = if self.ui.focus == Focus::AggregatedStats {
+                            &mut self.ui.table_state
+                        } else {
+                            &mut self.ui.connection_table_state
+                        };
+                        let i = if let Some(i) = table.selected() {
                             i.saturating_sub(1)
                         } else {
                             0
                         };
-                        self.ui.table_state.select(Some(i));
+                        table.select(Some(i));
                         self.terminal.draw(|f| self.ui.draw(f))?;
                     }
                     KeyCode::Down => {
                         // TODO: zero items check
-                        let i = if let Some(i) = self.ui.table_state.selected() {
-                            std::cmp::min(i + 1, self.ui.latest_stats().item_count() - 1)
+                        let (max, table) = if self.ui.focus == Focus::AggregatedStats {
+                            (
+                                self.ui.latest_stats().item_count(),
+                                &mut self.ui.table_state,
+                            )
+                        } else {
+                            (
+                                self.ui.latest_stats().connection_count(),
+                                &mut self.ui.connection_table_state,
+                            )
+                        };
+
+                        let i = if let Some(i) = table.selected() {
+                            if self.ui.focus == Focus::AggregatedStats {
+                                std::cmp::min(i + 1, max - 1)
+                            } else {
+                                std::cmp::min(i + 1, max - 1)
+                            }
                         } else {
                             0
                         };
-                        self.ui.table_state.select(Some(i));
+                        table.select(Some(i));
                         self.terminal.draw(|f| self.ui.draw(f))?;
                     }
                     _ => {}
