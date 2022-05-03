@@ -71,7 +71,7 @@ impl App {
 
                 let i = table.selected().unwrap_or(0).saturating_sub(1);
                 table.select(Some(i));
-                self.ui.ensura_table_indices_are_in_ranges();
+                self.ui.ensure_table_indices_are_in_ranges();
             }
             KeyCode::Down => {
                 let table = if self.ui.focus == Focus::AggregatedStats {
@@ -82,7 +82,7 @@ impl App {
 
                 let i = table.selected().unwrap_or(0) + 1;
                 table.select(Some(i));
-                self.ui.ensura_table_indices_are_in_ranges();
+                self.ui.ensure_table_indices_are_in_ranges();
             }
             _ => {
                 return Ok(false);
