@@ -127,7 +127,7 @@ impl App {
                     }
                     log::debug!("remove old stats");
                 }
-                self.ui.ensura_table_indices_are_in_ranges();
+                self.ui.ensure_table_indices_are_in_ranges();
                 self.terminal.draw(|f| self.ui.render(f))?;
             }
         }
@@ -565,7 +565,7 @@ impl UiState {
         }
     }
 
-    fn ensura_table_indices_are_in_ranges(&mut self) {
+    fn ensure_table_indices_are_in_ranges(&mut self) {
         if self.latest_stats().item_count() == 0 {
             self.aggregated_table_state.select(None);
         } else {
