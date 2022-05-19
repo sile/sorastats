@@ -55,8 +55,15 @@ impl StatsPoller {
             recorder,
             start: None,
         };
-        if matches!(poller.mode, Mode::Realtime { .. }) {
-            poller.poll_once()?;
+        match &mut poller.mode {
+            Mode::Realtime { .. } => {
+                poller.poll_once()?;
+            }
+            Mode::Replay { reader, .. } => {
+                if reader.get_mut().metadata()?.len() == 0 {
+                    anyhow::bail!("empty record file");
+                }
+            }
         }
         std::thread::spawn(move || poller.run());
         Ok(rx)

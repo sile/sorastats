@@ -31,14 +31,20 @@ impl App {
     }
 
     pub fn run(mut self) -> anyhow::Result<()> {
+        if !self.ui.realtime {
+            self.handle_replay_stats_poll()?;
+        }
+
         loop {
             if self.handle_event()? {
                 break;
             }
-            if self.ui.pause {
-                std::thread::sleep(self.recv_timeout());
-            } else {
-                self.handle_stats_poll()?;
+            if self.ui.realtime {
+                if self.ui.pause {
+                    std::thread::sleep(self.recv_timeout());
+                } else {
+                    self.handle_realtime_stats_poll()?;
+                }
             }
         }
         Ok(())
@@ -54,7 +60,17 @@ impl App {
                 return Ok(true);
             }
             KeyCode::Char('p') => {
-                self.ui.pause = !self.ui.pause;
+                if self.ui.realtime {
+                    self.ui.pause = !self.ui.pause;
+                }
+            }
+            KeyCode::Char('l') => {
+                if !self.ui.realtime {
+                    self.handle_replay_stats_poll()?;
+                }
+            }
+            KeyCode::Char('h') => {
+                self.ui.end_pos = std::cmp::max(1, self.ui.end_pos.saturating_sub(1));
             }
             KeyCode::Left => {
                 self.ui.focus = Focus::AggregatedStats;
@@ -109,7 +125,24 @@ impl App {
         Ok(false)
     }
 
-    fn handle_stats_poll(&mut self) -> anyhow::Result<()> {
+    fn handle_replay_stats_poll(&mut self) -> anyhow::Result<()> {
+        if self.ui.end_pos < self.ui.history.len() {
+            self.ui.end_pos += 1;
+        } else if let Ok(stats) = self.rx.recv() {
+            log::debug!("recv new stats");
+            self.ui.history.push_back(stats);
+            self.ui.end_pos += 1;
+        } else {
+            self.ui.eof = true;
+        }
+
+        self.ui.ensure_table_indices_are_in_ranges();
+        self.terminal.draw(|f| self.ui.render(f))?;
+
+        Ok(())
+    }
+
+    fn handle_realtime_stats_poll(&mut self) -> anyhow::Result<()> {
         match self.rx.recv_timeout(self.recv_timeout()) {
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 anyhow::bail!("Sora stats polling thread terminated unexpectedly");
@@ -178,10 +211,16 @@ struct UiState {
     individual_table_state: TableState,
     focus: Focus,
     pause: bool,
+    realtime: bool,
+
+    // For replay mode
+    eof: bool,
+    end_pos: usize,
 }
 
 impl UiState {
     fn new(options: Options) -> Self {
+        let realtime = options.is_realtime_mode();
         Self {
             options,
             history: VecDeque::new(),
@@ -189,11 +228,41 @@ impl UiState {
             individual_table_state: TableState::default(),
             focus: Focus::AggregatedStats,
             pause: false,
+            realtime,
+            eof: false,
+            end_pos: 0,
         }
     }
 
     fn latest_stats(&self) -> &Stats {
-        self.history.back().expect("unreachable")
+        if self.realtime {
+            self.history.back().expect("unreachable")
+        } else {
+            &self.history[self.end_pos - 1]
+        }
+    }
+
+    fn history_window(&self) -> (Duration, impl Iterator<Item = &Stats>) {
+        if self.realtime {
+            let start = self.history[0].timestamp;
+            (start, self.history.iter().take(self.history.len()).skip(0))
+        } else {
+            let mut start_pos = self.end_pos - 1;
+            let timestamp = self.latest_stats().timestamp;
+            while start_pos > 0 {
+                let duration = (timestamp - self.history[start_pos].timestamp).as_secs_f64();
+                if duration > self.options.chart_time_period.get() as f64 {
+                    start_pos += 1;
+                    break;
+                }
+                start_pos -= 1;
+            }
+            let start = self.history[start_pos].timestamp;
+            (
+                start,
+                self.history.iter().take(self.end_pos).skip(start_pos),
+            )
+        }
     }
 
     fn render(&mut self, f: &mut Frame) {
@@ -219,6 +288,12 @@ impl UiState {
     fn render_status(&mut self, f: &mut Frame, area: tui::layout::Rect) {
         let block = if self.pause {
             self.make_block("Status (PAUSED)", None)
+        } else if !self.realtime {
+            if self.eof && self.end_pos == self.history.len() {
+                self.make_block("Status (REPLAY, EOF)", None)
+            } else {
+                self.make_block("Status (REPLAY)", None)
+            }
         } else {
             self.make_block("Status", None)
         };
@@ -249,7 +324,11 @@ impl UiState {
     fn render_help(&mut self, f: &mut Frame, area: tui::layout::Rect) {
         let paragraph = Paragraph::new(vec![
             Spans::from("Quit:           'q' key"),
-            Spans::from("Pause / Resume: 'p' key"),
+            if self.realtime {
+                Spans::from("Pause / Resume: 'p' key")
+            } else {
+                Spans::from("Prev / Next:    'h' / 'l' keys")
+            },
             Spans::from("Move:           UP / DOWN / LEFT / RIGHT keys"),
         ])
         .block(self.make_block("Help", None))
@@ -486,9 +565,8 @@ impl UiState {
             return Vec::new();
         };
 
-        let start = self.history[0].timestamp;
-        self.history
-            .iter()
+        let (start, items) = self.history_window();
+        items
             .filter_map(|stats| {
                 let x = (stats.timestamp - start).as_secs_f64();
                 stats
@@ -508,9 +586,8 @@ impl UiState {
             return Vec::new();
         };
 
-        let start = self.history[0].timestamp;
-        self.history
-            .iter()
+        let (start, items) = self.history_window();
+        items
             .filter_map(|stats| {
                 let x = (stats.timestamp - start).as_secs_f64();
                 stats
