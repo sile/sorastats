@@ -22,7 +22,7 @@ Linux および MacOS 向けにはビルド済みバイナリが[リリースペ
 
 ```console
 // Linux でビルド済みバイナリを取得する例
-$ curl -L https://github.com/sile/sorastats/releases/download/${VERSION}/sorastats-${VERSION}.x86_64-unknown-linux-musl -o sorastats
+$ curl -L https://github.com/sile/sorastats/releases/download/0.1.1/sorastats-0.1.1.x86_64-unknown-linux-musl -o sorastats
 $ chmod +x sorastats
 $ ./sorastats
 ```
@@ -66,8 +66,7 @@ $ sorastats ${SORA_API_URL}
 `$ sorastats --help` コマンドを叩くと、以下のようなヘルプメッセージが表示されます。
 
 ```console
-$ sorastats --help
-sorastats 0.1.0
+$ sorastats 0.1.1
 WebRTC SFU Sora の統計情報ビューア
 
 USAGE:
@@ -75,7 +74,8 @@ USAGE:
 
 ARGS:
     <SORA_API_URL>
-            Sora の API の URL
+            「Sora の API の URL（リアルタイムモード）」あるいは「過去に `--record`
+            で記録したファイルのパス（リプレイモード）」
 
 OPTIONS:
     -c, --connection-filter <CONNECTION_FILTER>
@@ -112,6 +112,14 @@ OPTIONS:
             チャートの X 軸の表示期間（秒単位）
 
             [default: 60]
+
+        --record <RECORD>
+            指定されたファイルに、取得した統計情報を記録する
+
+            `<SORA_API_URL>`引数に URL の代わりにこのファイルへのパスを指定することで、
+            記録した統計情報を後から閲覧することができる
+
+            リプレイモードの場合には、このオプションを指定しても無視される
 
     -V, --version
             Print version information
