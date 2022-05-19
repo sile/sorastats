@@ -9,7 +9,7 @@ pub mod ui;
 
 #[derive(Debug, Clone, clap::Parser)]
 pub struct Options {
-    /// Sora の API の URL
+    /// 「Sora の API の URL（リアルタイムモード）」あるいは「過去に `--record` で記録したファイルのパス（リプレイモード）」
     pub sora_api_url: String,
 
     /// 統計 API から情報を取得する間隔（秒単位）
@@ -40,9 +40,17 @@ pub struct Options {
     #[clap(long, short = 'k', default_value = ".*")]
     pub stats_key_filter: regex::Regex,
 
-    /// 指定されたファイルに、取得した統計情報を保存する
+    /// 指定されたファイルに、取得した統計情報を記録する
     ///
-    /// TODO: リプレイに関する情報
+    ///
+    /// `<SORA_API_URL>`引数に URL の代わりにこのファイルへのパスを指定することで、
+    /// 記録した統計情報を後から閲覧することができる
+    ///
+    /// 記録ファイルのフォーマットは「各行に一つの Sora の統計 API の結果 JSON が格納されている」
+    /// といった単純なもの
+    /// （ただし、統計 API の結果が空だった場合には、その分の記録はスキップされる）
+    ///
+    /// リプレイモードの場合には、このオプションを指定しても無視される
     #[clap(long)]
     pub record: Option<PathBuf>,
 }
