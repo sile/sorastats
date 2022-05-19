@@ -46,10 +46,6 @@ pub struct Options {
     /// `<SORA_API_URL>`引数に URL の代わりにこのファイルへのパスを指定することで、
     /// 記録した統計情報を後から閲覧することができる
     ///
-    /// 記録ファイルのフォーマットは「各行に一つの Sora の統計 API の結果 JSON が格納されている」
-    /// といった単純なもの
-    /// （ただし、統計 API の結果が空だった場合には、その分の記録はスキップされる）
-    ///
     /// リプレイモードの場合には、このオプションを指定しても無視される
     #[clap(long)]
     pub record: Option<PathBuf>,
@@ -64,5 +60,9 @@ impl Options {
         } else {
             Ok(None)
         }
+    }
+
+    fn is_realtime_mode(&self) -> bool {
+        self.sora_api_url.starts_with("http://") || self.sora_api_url.starts_with("https://")
     }
 }
