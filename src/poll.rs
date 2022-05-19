@@ -1,32 +1,70 @@
 use crate::stats::{ConnectionStats, Stats};
 use crate::Options;
+use anyhow::Context as _;
+use std::fs::File;
+use std::io::{BufRead as _, BufReader, BufWriter, Write as _};
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 const SORA_API_HEADER_NAME: &str = "x-sora-target";
 const SORA_API_HEADER_VALUE: &str = "Sora_20171101.GetStatsAllConnections";
 
 pub type StatsReceiver = mpsc::Receiver<Stats>;
-pub type StatsSender = mpsc::Sender<Stats>;
+
+#[derive(Debug)]
+enum Mode {
+    Realtime {
+        tx: mpsc::Sender<Stats>,
+    },
+    Replay {
+        tx: mpsc::SyncSender<Stats>,
+        reader: BufReader<File>,
+    },
+}
 
 #[derive(Debug)]
 pub struct StatsPoller {
     options: Options,
-    tx: StatsSender,
+    mode: Mode,
     prev_request_time: Instant,
     prev_stats: Stats,
+    recorder: Option<BufWriter<File>>,
+    start: Option<SystemTime>,
 }
 
 impl StatsPoller {
     pub fn start_thread(options: Options) -> anyhow::Result<StatsReceiver> {
-        let (tx, rx) = mpsc::channel();
+        let recorder = options.create_recorder()?;
+
+        let (rx, mode) = if options.is_realtime_mode() {
+            let (tx, rx) = mpsc::channel();
+            (rx, Mode::Realtime { tx })
+        } else {
+            let (tx, rx) = mpsc::sync_channel(0);
+            let file = File::open(&options.sora_api_url)
+                .with_context(|| format!("failed to open record file: {}", options.sora_api_url))?;
+            let reader = BufReader::new(file);
+            (rx, Mode::Replay { tx, reader })
+        };
+
         let mut poller = StatsPoller {
             options,
-            tx,
+            mode,
             prev_request_time: Instant::now(),
             prev_stats: Stats::empty(),
+            recorder,
+            start: None,
         };
-        poller.poll_once()?;
+        match &mut poller.mode {
+            Mode::Realtime { .. } => {
+                poller.poll_once()?;
+            }
+            Mode::Replay { reader, .. } => {
+                if reader.get_mut().metadata()?.len() == 0 {
+                    anyhow::bail!("empty record file");
+                }
+            }
+        }
         std::thread::spawn(move || poller.run());
         Ok(rx)
     }
@@ -39,7 +77,11 @@ impl StatsPoller {
                     break;
                 }
                 Ok(false) => {
-                    log::debug!("stop polling as the main thread has finished");
+                    if matches!(self.mode, Mode::Realtime { .. }) {
+                        log::debug!("stop polling as the main thread has finished");
+                    } else {
+                        log::debug!("reached EOF");
+                    }
                     break;
                 }
                 Ok(true) => {}
@@ -48,35 +90,74 @@ impl StatsPoller {
     }
 
     fn run_once(&mut self) -> anyhow::Result<bool> {
-        let polling_interval = Duration::from_secs(self.options.polling_interval.get() as u64);
-        if let Some(duration) = polling_interval.checked_sub(self.prev_request_time.elapsed()) {
-            std::thread::sleep(duration);
+        if matches!(self.mode, Mode::Realtime { .. }) {
+            let polling_interval = Duration::from_secs(self.options.polling_interval.get() as u64);
+            if let Some(duration) = polling_interval.checked_sub(self.prev_request_time.elapsed()) {
+                std::thread::sleep(duration);
+            }
         }
         self.poll_once()
     }
 
     fn poll_once(&mut self) -> anyhow::Result<bool> {
         self.prev_request_time = Instant::now();
-        let values: Vec<serde_json::Value> = ureq::post(&self.options.sora_api_url)
-            .set(SORA_API_HEADER_NAME, SORA_API_HEADER_VALUE)
-            .call()?
-            .into_json()?;
-        log::debug!(
-            "HTTP POST {} {}:{} (elapsed: {:?}, connections: {})",
-            self.options.sora_api_url,
-            SORA_API_HEADER_NAME,
-            SORA_API_HEADER_VALUE,
-            self.prev_request_time.elapsed(),
-            values.len()
-        );
+        let item = match &mut self.mode {
+            Mode::Realtime { .. } => {
+                let values: Vec<serde_json::Value> = ureq::post(&self.options.sora_api_url)
+                    .set(SORA_API_HEADER_NAME, SORA_API_HEADER_VALUE)
+                    .call()?
+                    .into_json()?;
+                let item = RecordItem {
+                    time: SystemTime::now(),
+                    values,
+                };
+                if let Some(mut recorder) = self.recorder.as_mut() {
+                    serde_json::to_writer(&mut recorder, &item)?;
+                    writeln!(recorder)?;
+                    recorder.flush()?;
+                }
+                log::debug!(
+                    "HTTP POST {} {}:{} (elapsed: {:?}, connections: {})",
+                    self.options.sora_api_url,
+                    SORA_API_HEADER_NAME,
+                    SORA_API_HEADER_VALUE,
+                    self.prev_request_time.elapsed(),
+                    item.values.len()
+                );
+                item
+            }
+            Mode::Replay { reader, .. } => {
+                let mut buf = String::new();
+                let size = reader.read_line(&mut buf)?;
+                if size == 0 {
+                    return Ok(false); // EOF
+                }
+                let item: RecordItem = serde_json::from_str(&buf)?;
+                log::debug!("Read a record entry (connections: {})", item.values.len());
+
+                item
+            }
+        };
+
+        let start = if let Some(start) = self.start {
+            start
+        } else {
+            self.start = Some(item.time);
+            item.time
+        };
 
         let mut connections = Vec::new();
-        for value in values {
+        for value in item.values {
             connections.push(ConnectionStats::new(value, &self.prev_stats)?);
         }
         let connections = self.apply_filters(connections);
-        self.prev_stats = Stats::new(connections);
-        Ok(self.tx.send(self.prev_stats.clone()).is_ok())
+        let timestamp = item.time.duration_since(start)?;
+        self.prev_stats = Stats::new(item.time, timestamp, connections);
+
+        match &self.mode {
+            Mode::Realtime { tx } => Ok(tx.send(self.prev_stats.clone()).is_ok()),
+            Mode::Replay { tx, .. } => Ok(tx.send(self.prev_stats.clone()).is_ok()),
+        }
     }
 
     fn apply_filters(&self, connections: Vec<ConnectionStats>) -> Vec<ConnectionStats> {
@@ -99,4 +180,10 @@ impl StatsPoller {
             })
             .collect()
     }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct RecordItem {
+    time: SystemTime,
+    values: Vec<serde_json::Value>,
 }
