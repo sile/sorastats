@@ -1,3 +1,8 @@
+use anyhow::Context as _;
+use std::fs::File;
+use std::io::BufWriter;
+use std::path::PathBuf;
+
 pub mod poll;
 pub mod stats;
 pub mod ui;
@@ -34,4 +39,22 @@ pub struct Options {
     /// "^rtp[.]" という正規表現を指定すると良い。
     #[clap(long, short = 'k', default_value = ".*")]
     pub stats_key_filter: regex::Regex,
+
+    /// 指定されたファイルに、取得した統計情報を保存する
+    ///
+    /// TODO: リプレイに関する情報
+    #[clap(long)]
+    pub record: Option<PathBuf>,
+}
+
+impl Options {
+    fn create_recorder(&self) -> anyhow::Result<Option<BufWriter<File>>> {
+        if let Some(path) = &self.record {
+            let file = File::create(path)
+                .with_context(|| format!("failed to create record file: {path:?}"))?;
+            Ok(Some(BufWriter::new(file)))
+        } else {
+            Ok(None)
+        }
+    }
 }
