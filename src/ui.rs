@@ -242,6 +242,7 @@ impl UiState {
         }
     }
 
+    #[allow(clippy::iter_skip_zero)]
     fn history_window(&self) -> (Duration, impl Iterator<Item = &Stats>) {
         if self.realtime {
             let start = self.history[0].timestamp;

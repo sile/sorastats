@@ -171,11 +171,8 @@ impl StatsPoller {
                 })
             })
             .map(|mut c| {
-                c.items = c
-                    .items
-                    .into_iter()
-                    .filter(|(k, _v)| self.options.stats_key_filter.is_match(k))
-                    .collect();
+                c.items
+                    .retain(|k, _v| self.options.stats_key_filter.is_match(k));
                 c
             })
             .collect()
