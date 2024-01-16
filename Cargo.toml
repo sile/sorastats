@@ -14,7 +14,7 @@ readme = "README.md"
 [dependencies]
 anyhow = "1"
 chrono = "0.4"
-clap = { version = "3", features = ["derive"] }
+clap = { version = "4", features = ["derive"] }
 crossterm = "0.23"
 log = "0.4"
 ordered-float = "3"
