@@ -1,5 +1,5 @@
-use anyhow::Context;
 use ordered_float::OrderedFloat;
+use orfail::OrFail;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, SystemTime};
 
@@ -167,8 +167,8 @@ impl Stats {
         }
     }
 
-    pub fn timestamp(&self) -> anyhow::Result<Duration> {
-        let t = self.time.elapsed()?;
+    pub fn timestamp(&self) -> orfail::Result<Duration> {
+        let t = self.time.elapsed().or_fail()?;
         Ok(t)
     }
 
@@ -189,24 +189,24 @@ pub struct ConnectionStats {
 }
 
 impl ConnectionStats {
-    pub fn new(json: serde_json::Value, prev: &Stats) -> anyhow::Result<Self> {
+    pub fn new(json: serde_json::Value, prev: &Stats) -> orfail::Result<Self> {
         let obj = json
             .as_object()
-            .ok_or_else(|| anyhow::anyhow!("not a JSON object"))?;
+            .or_fail_with(|_| format!("not a JSON object"))?;
         let connection_id = obj
             .get("connection_id")
-            .ok_or_else(|| anyhow::anyhow!("missing 'connection_id'"))?
+            .or_fail_with(|_| format!("missing 'connection_id'"))?
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("not a JSON string"))?
+            .or_fail_with(|_| format!("not a JSON string"))?
             .to_owned();
         let timestamp = obj
             .get("timestamp")
-            .ok_or_else(|| anyhow::anyhow!("missing 'timestamp'"))?
+            .or_fail_with(|_| format!("missing 'timestamp'"))?
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("not a JSON string"))?
+            .or_fail_with(|_| format!("not a JSON string"))?
             .to_owned();
         let timestamp = chrono::DateTime::parse_from_rfc3339(&timestamp)
-            .with_context(|| format!("parse timestamp failed: {:?}", timestamp))?;
+            .or_fail_with(|e| format!("parse timestamp {timestamp:?} failed: {e}"))?;
 
         let mut key = String::new();
         let mut stats_items = BTreeMap::new();
@@ -216,7 +216,8 @@ impl ConnectionStats {
             .connections
             .get(&connection_id)
             .map(|c| (timestamp - c.timestamp).to_std())
-            .transpose()?;
+            .transpose()
+            .or_fail()?;
         let items = stats_items
             .into_iter()
             .map(|(k, v)| {

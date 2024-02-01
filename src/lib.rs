@@ -1,4 +1,4 @@
-use anyhow::Context as _;
+use orfail::OrFail;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::PathBuf;
@@ -52,10 +52,10 @@ pub struct Options {
 }
 
 impl Options {
-    fn create_recorder(&self) -> anyhow::Result<Option<BufWriter<File>>> {
+    fn create_recorder(&self) -> orfail::Result<Option<BufWriter<File>>> {
         if let Some(path) = &self.record {
             let file = File::create(path)
-                .with_context(|| format!("failed to create record file: {path:?}"))?;
+                .or_fail_with(|e| format!("failed to create record file {path:?}: {e}"))?;
             Ok(Some(BufWriter::new(file)))
         } else {
             Ok(None)

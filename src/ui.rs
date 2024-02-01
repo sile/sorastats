@@ -3,6 +3,7 @@ use crate::stats::{format_u64, Stats};
 use crate::Options;
 use crossterm::event::{KeyCode, KeyEvent};
 use ordered_float::OrderedFloat;
+use orfail::OrFail;
 use std::collections::VecDeque;
 use std::time::Duration;
 use tui::layout::{Alignment, Constraint, Direction, Layout};
@@ -23,14 +24,14 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(rx: StatsReceiver, options: Options) -> anyhow::Result<Self> {
+    pub fn new(rx: StatsReceiver, options: Options) -> orfail::Result<Self> {
         let terminal = Self::setup_terminal()?;
         log::debug!("setup terminal");
         let ui = UiState::new(options);
         Ok(Self { rx, ui, terminal })
     }
 
-    pub fn run(mut self) -> anyhow::Result<()> {
+    pub fn run(mut self) -> orfail::Result<()> {
         if !self.ui.realtime {
             self.handle_replay_stats_poll()?;
         }
@@ -54,7 +55,7 @@ impl App {
         Duration::from_millis(10)
     }
 
-    fn handle_key_event(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
+    fn handle_key_event(&mut self, key: KeyEvent) -> orfail::Result<bool> {
         match key.code {
             KeyCode::Char('q') => {
                 return Ok(true);
@@ -104,20 +105,20 @@ impl App {
                 return Ok(false);
             }
         }
-        self.terminal.draw(|f| self.ui.render(f))?;
+        self.terminal.draw(|f| self.ui.render(f)).or_fail()?;
         Ok(false)
     }
 
-    fn handle_event(&mut self) -> anyhow::Result<bool> {
-        while crossterm::event::poll(std::time::Duration::from_secs(0))? {
-            match crossterm::event::read()? {
+    fn handle_event(&mut self) -> orfail::Result<bool> {
+        while crossterm::event::poll(std::time::Duration::from_secs(0)).or_fail()? {
+            match crossterm::event::read().or_fail()? {
                 crossterm::event::Event::Key(key) => {
                     if self.handle_key_event(key)? {
                         return Ok(true);
                     }
                 }
                 crossterm::event::Event::Resize(_, _) => {
-                    self.terminal.draw(|f| self.ui.render(f))?;
+                    self.terminal.draw(|f| self.ui.render(f)).or_fail()?;
                 }
                 _ => {}
             }
@@ -125,7 +126,7 @@ impl App {
         Ok(false)
     }
 
-    fn handle_replay_stats_poll(&mut self) -> anyhow::Result<()> {
+    fn handle_replay_stats_poll(&mut self) -> orfail::Result<()> {
         if self.ui.end_pos < self.ui.history.len() {
             self.ui.end_pos += 1;
         } else if let Ok(stats) = self.rx.recv() {
@@ -137,15 +138,17 @@ impl App {
         }
 
         self.ui.ensure_table_indices_are_in_ranges();
-        self.terminal.draw(|f| self.ui.render(f))?;
+        self.terminal.draw(|f| self.ui.render(f)).or_fail()?;
 
         Ok(())
     }
 
-    fn handle_realtime_stats_poll(&mut self) -> anyhow::Result<()> {
+    fn handle_realtime_stats_poll(&mut self) -> orfail::Result<()> {
         match self.rx.recv_timeout(self.recv_timeout()) {
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                anyhow::bail!("Sora stats polling thread terminated unexpectedly");
+                return Err(orfail::Failure::new(
+                    "Sora stats polling thread terminated unexpectedly",
+                ));
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Ok(stats) => {
@@ -161,28 +164,29 @@ impl App {
                     log::debug!("remove old stats");
                 }
                 self.ui.ensure_table_indices_are_in_ranges();
-                self.terminal.draw(|f| self.ui.render(f))?;
+                self.terminal.draw(|f| self.ui.render(f)).or_fail()?;
             }
         }
         Ok(())
     }
 
-    fn setup_terminal() -> anyhow::Result<Terminal> {
-        crossterm::terminal::enable_raw_mode()?;
+    fn setup_terminal() -> orfail::Result<Terminal> {
+        crossterm::terminal::enable_raw_mode().or_fail()?;
         let mut stdout = std::io::stdout();
-        crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen,)?;
+        crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen).or_fail()?;
         let backend = tui::backend::CrosstermBackend::new(stdout);
-        let terminal = tui::Terminal::new(backend)?;
+        let terminal = tui::Terminal::new(backend).or_fail()?;
         Ok(terminal)
     }
 
-    fn teardown_terminal(&mut self) -> anyhow::Result<()> {
-        crossterm::terminal::disable_raw_mode()?;
+    fn teardown_terminal(&mut self) -> orfail::Result<()> {
+        crossterm::terminal::disable_raw_mode().or_fail()?;
         crossterm::execute!(
             self.terminal.backend_mut(),
             crossterm::terminal::LeaveAlternateScreen,
-        )?;
-        self.terminal.show_cursor()?;
+        )
+        .or_fail()?;
+        self.terminal.show_cursor().or_fail()?;
         Ok(())
     }
 }
