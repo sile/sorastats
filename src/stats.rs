@@ -1,4 +1,3 @@
-use ordered_float::OrderedFloat;
 use orfail::OrFail;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, SystemTime};
@@ -15,7 +14,7 @@ pub struct ConnectionStatsItemValue {
 impl ConnectionStatsItemValue {
     pub fn format_value(&self) -> String {
         if let StatsItemValue::Number(v) = self.value {
-            format_u64(v.0 as u64)
+            format_u64(v as u64)
         } else {
             self.value.to_string()
         }
@@ -71,9 +70,9 @@ pub fn format_u64(mut n: u64) -> String {
     String::from_utf8(s).expect("unreachable")
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub enum StatsItemValue {
-    Number(OrderedFloat<f64>),
+    Number(f64),
     Bool(bool),
     String(String),
 }
@@ -81,12 +80,25 @@ pub enum StatsItemValue {
 impl StatsItemValue {
     pub fn as_f64(&self) -> Option<f64> {
         if let Self::Number(v) = self {
-            Some(v.0)
+            Some(*v)
         } else {
             None
         }
     }
 }
+
+impl PartialEq for StatsItemValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Number(x), Self::Number(y)) => x == y,
+            (Self::Bool(x), Self::Bool(y)) => x == y,
+            (Self::String(x), Self::String(y)) => x == y,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for StatsItemValue {}
 
 impl std::fmt::Display for StatsItemValue {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -261,7 +273,7 @@ fn collect_stats_items(
         match v {
             serde_json::Value::Number(v) => {
                 if let Some(v) = v.as_f64() {
-                    items.insert(key.clone(), StatsItemValue::Number(OrderedFloat(v)));
+                    items.insert(key.clone(), StatsItemValue::Number(v));
                 } else {
                     log::warn!("too large number (ignored): {v}");
                 }
