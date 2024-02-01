@@ -15,9 +15,9 @@ readme = "README.md"
 anyhow = "1"
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
-crossterm = "0.23"
+crossterm = "0.27"
 log = "0.4"
-ordered-float = "3"
+ordered-float = "4"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
