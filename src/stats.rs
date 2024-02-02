@@ -204,18 +204,18 @@ impl ConnectionStats {
     pub fn new(json: serde_json::Value, prev: &Stats) -> orfail::Result<Self> {
         let obj = json
             .as_object()
-            .or_fail_with(|_| format!("not a JSON object"))?;
+            .or_fail_with(|_| "not a JSON object".to_owned())?;
         let connection_id = obj
             .get("connection_id")
-            .or_fail_with(|_| format!("missing 'connection_id'"))?
+            .or_fail_with(|_| "missing 'connection_id'".to_owned())?
             .as_str()
-            .or_fail_with(|_| format!("not a JSON string"))?
+            .or_fail_with(|_| "not a JSON string".to_owned())?
             .to_owned();
         let timestamp = obj
             .get("timestamp")
-            .or_fail_with(|_| format!("missing 'timestamp'"))?
+            .or_fail_with(|_| "missing 'timestamp'".to_owned())?
             .as_str()
-            .or_fail_with(|_| format!("not a JSON string"))?
+            .or_fail_with(|_| "not a JSON string".to_owned())?
             .to_owned();
         let timestamp = chrono::DateTime::parse_from_rfc3339(&timestamp)
             .or_fail_with(|e| format!("parse timestamp {timestamp:?} failed: {e}"))?;
