@@ -1,5 +1,4 @@
-use anyhow::Context;
-use ordered_float::OrderedFloat;
+use orfail::OrFail;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, SystemTime};
 
@@ -15,7 +14,7 @@ pub struct ConnectionStatsItemValue {
 impl ConnectionStatsItemValue {
     pub fn format_value(&self) -> String {
         if let StatsItemValue::Number(v) = self.value {
-            format_u64(v.0 as u64)
+            format_u64(v as u64)
         } else {
             self.value.to_string()
         }
@@ -71,9 +70,9 @@ pub fn format_u64(mut n: u64) -> String {
     String::from_utf8(s).expect("unreachable")
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub enum StatsItemValue {
-    Number(OrderedFloat<f64>),
+    Number(f64),
     Bool(bool),
     String(String),
 }
@@ -81,12 +80,25 @@ pub enum StatsItemValue {
 impl StatsItemValue {
     pub fn as_f64(&self) -> Option<f64> {
         if let Self::Number(v) = self {
-            Some(v.0)
+            Some(*v)
         } else {
             None
         }
     }
 }
+
+impl PartialEq for StatsItemValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Number(x), Self::Number(y)) => x == y,
+            (Self::Bool(x), Self::Bool(y)) => x == y,
+            (Self::String(x), Self::String(y)) => x == y,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for StatsItemValue {}
 
 impl std::fmt::Display for StatsItemValue {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -167,8 +179,8 @@ impl Stats {
         }
     }
 
-    pub fn timestamp(&self) -> anyhow::Result<Duration> {
-        let t = self.time.elapsed()?;
+    pub fn timestamp(&self) -> orfail::Result<Duration> {
+        let t = self.time.elapsed().or_fail()?;
         Ok(t)
     }
 
@@ -189,24 +201,24 @@ pub struct ConnectionStats {
 }
 
 impl ConnectionStats {
-    pub fn new(json: serde_json::Value, prev: &Stats) -> anyhow::Result<Self> {
+    pub fn new(json: serde_json::Value, prev: &Stats) -> orfail::Result<Self> {
         let obj = json
             .as_object()
-            .ok_or_else(|| anyhow::anyhow!("not a JSON object"))?;
+            .or_fail_with(|_| "not a JSON object".to_owned())?;
         let connection_id = obj
             .get("connection_id")
-            .ok_or_else(|| anyhow::anyhow!("missing 'connection_id'"))?
+            .or_fail_with(|_| "missing 'connection_id'".to_owned())?
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("not a JSON string"))?
+            .or_fail_with(|_| "not a JSON string".to_owned())?
             .to_owned();
         let timestamp = obj
             .get("timestamp")
-            .ok_or_else(|| anyhow::anyhow!("missing 'timestamp'"))?
+            .or_fail_with(|_| "missing 'timestamp'".to_owned())?
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("not a JSON string"))?
+            .or_fail_with(|_| "not a JSON string".to_owned())?
             .to_owned();
         let timestamp = chrono::DateTime::parse_from_rfc3339(&timestamp)
-            .with_context(|| format!("parse timestamp failed: {:?}", timestamp))?;
+            .or_fail_with(|e| format!("parse timestamp {timestamp:?} failed: {e}"))?;
 
         let mut key = String::new();
         let mut stats_items = BTreeMap::new();
@@ -216,7 +228,8 @@ impl ConnectionStats {
             .connections
             .get(&connection_id)
             .map(|c| (timestamp - c.timestamp).to_std())
-            .transpose()?;
+            .transpose()
+            .or_fail()?;
         let items = stats_items
             .into_iter()
             .map(|(k, v)| {
@@ -260,7 +273,7 @@ fn collect_stats_items(
         match v {
             serde_json::Value::Number(v) => {
                 if let Some(v) = v.as_f64() {
-                    items.insert(key.clone(), StatsItemValue::Number(OrderedFloat(v)));
+                    items.insert(key.clone(), StatsItemValue::Number(v));
                 } else {
                     log::warn!("too large number (ignored): {v}");
                 }

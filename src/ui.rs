@@ -2,19 +2,19 @@ use crate::poll::StatsReceiver;
 use crate::stats::{format_u64, Stats};
 use crate::Options;
 use crossterm::event::{KeyCode, KeyEvent};
-use ordered_float::OrderedFloat;
-use std::collections::VecDeque;
-use std::time::Duration;
-use tui::layout::{Alignment, Constraint, Direction, Layout};
-use tui::style::{Modifier, Style};
-use tui::symbols::Marker;
-use tui::text::{Span, Spans};
-use tui::widgets::{
+use orfail::OrFail;
+use ratatui::layout::{Alignment, Constraint, Direction, Layout};
+use ratatui::style::{Modifier, Style};
+use ratatui::symbols::Marker;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{
     Axis, Block, Borders, Cell, Chart, Dataset, GraphType, Paragraph, Row, Table, TableState,
 };
+use ratatui::Frame;
+use std::collections::VecDeque;
+use std::time::Duration;
 
-type Terminal = tui::Terminal<tui::backend::CrosstermBackend<std::io::Stdout>>;
-type Frame<'a> = tui::Frame<'a, tui::backend::CrosstermBackend<std::io::Stdout>>;
+type Terminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>;
 
 pub struct App {
     rx: StatsReceiver,
@@ -23,14 +23,14 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(rx: StatsReceiver, options: Options) -> anyhow::Result<Self> {
+    pub fn new(rx: StatsReceiver, options: Options) -> orfail::Result<Self> {
         let terminal = Self::setup_terminal()?;
         log::debug!("setup terminal");
         let ui = UiState::new(options);
         Ok(Self { rx, ui, terminal })
     }
 
-    pub fn run(mut self) -> anyhow::Result<()> {
+    pub fn run(mut self) -> orfail::Result<()> {
         if !self.ui.realtime {
             self.handle_replay_stats_poll()?;
         }
@@ -54,7 +54,7 @@ impl App {
         Duration::from_millis(10)
     }
 
-    fn handle_key_event(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
+    fn handle_key_event(&mut self, key: KeyEvent) -> orfail::Result<bool> {
         match key.code {
             KeyCode::Char('q') => {
                 return Ok(true);
@@ -104,20 +104,20 @@ impl App {
                 return Ok(false);
             }
         }
-        self.terminal.draw(|f| self.ui.render(f))?;
+        self.terminal.draw(|f| self.ui.render(f)).or_fail()?;
         Ok(false)
     }
 
-    fn handle_event(&mut self) -> anyhow::Result<bool> {
-        while crossterm::event::poll(std::time::Duration::from_secs(0))? {
-            match crossterm::event::read()? {
+    fn handle_event(&mut self) -> orfail::Result<bool> {
+        while crossterm::event::poll(std::time::Duration::from_secs(0)).or_fail()? {
+            match crossterm::event::read().or_fail()? {
                 crossterm::event::Event::Key(key) => {
                     if self.handle_key_event(key)? {
                         return Ok(true);
                     }
                 }
                 crossterm::event::Event::Resize(_, _) => {
-                    self.terminal.draw(|f| self.ui.render(f))?;
+                    self.terminal.draw(|f| self.ui.render(f)).or_fail()?;
                 }
                 _ => {}
             }
@@ -125,7 +125,7 @@ impl App {
         Ok(false)
     }
 
-    fn handle_replay_stats_poll(&mut self) -> anyhow::Result<()> {
+    fn handle_replay_stats_poll(&mut self) -> orfail::Result<()> {
         if self.ui.end_pos < self.ui.history.len() {
             self.ui.end_pos += 1;
         } else if let Ok(stats) = self.rx.recv() {
@@ -137,15 +137,17 @@ impl App {
         }
 
         self.ui.ensure_table_indices_are_in_ranges();
-        self.terminal.draw(|f| self.ui.render(f))?;
+        self.terminal.draw(|f| self.ui.render(f)).or_fail()?;
 
         Ok(())
     }
 
-    fn handle_realtime_stats_poll(&mut self) -> anyhow::Result<()> {
+    fn handle_realtime_stats_poll(&mut self) -> orfail::Result<()> {
         match self.rx.recv_timeout(self.recv_timeout()) {
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                anyhow::bail!("Sora stats polling thread terminated unexpectedly");
+                return Err(orfail::Failure::new(
+                    "Sora stats polling thread terminated unexpectedly",
+                ));
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Ok(stats) => {
@@ -161,28 +163,29 @@ impl App {
                     log::debug!("remove old stats");
                 }
                 self.ui.ensure_table_indices_are_in_ranges();
-                self.terminal.draw(|f| self.ui.render(f))?;
+                self.terminal.draw(|f| self.ui.render(f)).or_fail()?;
             }
         }
         Ok(())
     }
 
-    fn setup_terminal() -> anyhow::Result<Terminal> {
-        crossterm::terminal::enable_raw_mode()?;
+    fn setup_terminal() -> orfail::Result<Terminal> {
+        crossterm::terminal::enable_raw_mode().or_fail()?;
         let mut stdout = std::io::stdout();
-        crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen,)?;
-        let backend = tui::backend::CrosstermBackend::new(stdout);
-        let terminal = tui::Terminal::new(backend)?;
+        crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen).or_fail()?;
+        let backend = ratatui::backend::CrosstermBackend::new(stdout);
+        let terminal = ratatui::Terminal::new(backend).or_fail()?;
         Ok(terminal)
     }
 
-    fn teardown_terminal(&mut self) -> anyhow::Result<()> {
-        crossterm::terminal::disable_raw_mode()?;
+    fn teardown_terminal(&mut self) -> orfail::Result<()> {
+        crossterm::terminal::disable_raw_mode().or_fail()?;
         crossterm::execute!(
             self.terminal.backend_mut(),
             crossterm::terminal::LeaveAlternateScreen,
-        )?;
-        self.terminal.show_cursor()?;
+        )
+        .or_fail()?;
+        self.terminal.show_cursor().or_fail()?;
         Ok(())
     }
 }
@@ -276,7 +279,7 @@ impl UiState {
         self.render_body(f, chunks[1]);
     }
 
-    fn render_header(&mut self, f: &mut Frame, area: tui::layout::Rect) {
+    fn render_header(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
@@ -286,7 +289,7 @@ impl UiState {
         self.render_help(f, chunks[1]);
     }
 
-    fn render_status(&mut self, f: &mut Frame, area: tui::layout::Rect) {
+    fn render_status(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
         let block = if self.pause {
             self.make_block("Status (PAUSED)", None)
         } else if !self.realtime {
@@ -301,17 +304,17 @@ impl UiState {
 
         let stats = self.latest_stats();
         let paragraph = Paragraph::new(vec![
-            Spans::from(format!(
+            Line::from(format!(
                 "Update Time: {}",
                 chrono::DateTime::<chrono::Local>::from(stats.time)
                     .to_rfc3339_opts(chrono::SecondsFormat::Millis, false)
             )),
-            Spans::from(format!(
+            Line::from(format!(
                 "Connections: {:5} (filter={})",
                 stats.connection_count(),
                 self.options.connection_filter
             )),
-            Spans::from(format!(
+            Line::from(format!(
                 "Stats  Keys: {:5} (filter={})",
                 stats.item_count(),
                 self.options.stats_key_filter
@@ -322,22 +325,22 @@ impl UiState {
         f.render_widget(paragraph, area);
     }
 
-    fn render_help(&mut self, f: &mut Frame, area: tui::layout::Rect) {
+    fn render_help(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
         let paragraph = Paragraph::new(vec![
-            Spans::from("Quit:           'q' key"),
+            Line::from("Quit:           'q' key"),
             if self.realtime {
-                Spans::from("Pause / Resume: 'p' key")
+                Line::from("Pause / Resume: 'p' key")
             } else {
-                Spans::from("Prev / Next:    'h' / 'l' keys")
+                Line::from("Prev / Next:    'h' / 'l' keys")
             },
-            Spans::from("Move:           UP / DOWN / LEFT / RIGHT keys"),
+            Line::from("Move:           UP / DOWN / LEFT / RIGHT keys"),
         ])
         .block(self.make_block("Help", None))
         .alignment(Alignment::Left);
         f.render_widget(paragraph, area);
     }
 
-    fn render_body(&mut self, f: &mut Frame, area: tui::layout::Rect) {
+    fn render_body(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
@@ -347,7 +350,7 @@ impl UiState {
         self.render_details(f, chunks[1]);
     }
 
-    fn render_aggregated_stats(&mut self, f: &mut Frame, area: tui::layout::Rect) {
+    fn render_aggregated_stats(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
         let header_cells = ["Key", "Sum", "Delta/s"]
             .into_iter()
             .map(|h| Cell::from(h).style(Style::default().add_modifier(Modifier::BOLD)));
@@ -389,16 +392,15 @@ impl UiState {
             width = (self.latest_stats().item_count()).to_string().len()
         );
 
-        let table = Table::new(rows)
+        let table = Table::new(rows, widths)
             .header(header)
             .block(self.make_block("Aggregated Stats", Some(Focus::AggregatedStats)))
             .highlight_style(highlight_style)
-            .highlight_symbol(&highlight_symbol)
-            .widths(&widths);
+            .highlight_symbol(&highlight_symbol);
         f.render_stateful_widget(table, area, &mut self.aggregated_table_state);
     }
 
-    fn render_details(&mut self, f: &mut Frame, area: tui::layout::Rect) {
+    fn render_details(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
@@ -408,7 +410,7 @@ impl UiState {
         self.render_chart(f, chunks[1]);
     }
 
-    fn render_individual_stats(&mut self, f: &mut Frame, area: tui::layout::Rect) {
+    fn render_individual_stats(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
         let selected_key = self.selected_item_key();
 
         let mut row_items = Vec::with_capacity(self.latest_stats().connection_count());
@@ -474,19 +476,18 @@ impl UiState {
             format!("{:>width$}  ", "", width = cursor_width)
         };
 
-        let table = Table::new(rows)
+        let table = Table::new(rows, widths)
             .header(header)
             .block(self.make_block(
                 &format!("Values of {:?}", selected_key.unwrap_or("")),
                 Some(Focus::IndividualStats),
             ))
             .highlight_style(highlight_style)
-            .highlight_symbol(&highlight_symbol)
-            .widths(&widths);
+            .highlight_symbol(&highlight_symbol);
         f.render_stateful_widget(table, area, &mut self.individual_table_state);
     }
 
-    fn render_chart(&mut self, f: &mut Frame, area: tui::layout::Rect) {
+    fn render_chart(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
         let block = match (self.selected_item_key(), self.selected_connection_id()) {
             (Some(key), Some(id)) => {
                 self.make_block(&format!("Delta/s Chart of {:?} ({})", key, id), None)
@@ -508,16 +509,14 @@ impl UiState {
 
         let lower_bound = data
             .iter()
-            .map(|(_, y)| OrderedFloat(*y))
-            .min()
-            .map(|y| y.0)
+            .map(|(_, y)| *y)
+            .min_by(|a, b| a.total_cmp(b))
             .expect("unreachable")
             .floor();
         let mut upper_bound = data
             .iter()
-            .map(|(_, y)| OrderedFloat(*y))
-            .max()
-            .map(|y| y.0)
+            .map(|(_, y)| *y)
+            .max_by(|a, b| a.total_cmp(b))
             .expect("unreachable")
             .ceil();
         let is_constant = lower_bound == upper_bound;
@@ -626,7 +625,7 @@ impl UiState {
         })
     }
 
-    fn make_block(&self, name: &str, block: Option<Focus>) -> tui::widgets::Block<'static> {
+    fn make_block(&self, name: &str, block: Option<Focus>) -> ratatui::widgets::Block<'static> {
         if block == Some(self.focus) {
             Block::default()
                 .borders(Borders::ALL)
