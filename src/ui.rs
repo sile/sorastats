@@ -272,11 +272,19 @@ impl UiState {
     fn render(&mut self, f: &mut Frame) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(5), Constraint::Min(0)].as_ref())
+            .constraints(
+                [
+                    Constraint::Length(5),
+                    Constraint::Min(0),
+                    Constraint::Length(3),
+                ]
+                .as_ref(),
+            )
             .split(f.size());
 
         self.render_header(f, chunks[0]);
         self.render_body(f, chunks[1]);
+        self.render_footer(f, chunks[2]);
     }
 
     fn render_header(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
@@ -287,6 +295,13 @@ impl UiState {
 
         self.render_status(f, chunks[0]);
         self.render_help(f, chunks[1]);
+    }
+
+    fn render_footer(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
+        let paragraph = Paragraph::new(vec![])
+            .block(Block::default().borders(Borders::ALL))
+            .alignment(Alignment::Left);
+        f.render_widget(paragraph, area);
     }
 
     fn render_status(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
