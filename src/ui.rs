@@ -298,7 +298,12 @@ impl UiState {
     }
 
     fn render_footer(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
-        let paragraph = Paragraph::new(vec![])
+        let mut text = vec![];
+        if let Some(key) = self.selected_item_key() {
+            text.push(Line::from(format!("[KEY] {}", key)));
+        }
+
+        let paragraph = Paragraph::new(text)
             .block(Block::default().borders(Borders::ALL))
             .alignment(Alignment::Left);
         f.render_widget(paragraph, area);
