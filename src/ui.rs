@@ -396,7 +396,7 @@ impl UiState {
             .header(header)
             .block(self.make_block("Aggregated Stats", Some(Focus::AggregatedStats)))
             .highlight_style(highlight_style)
-            .highlight_symbol(&highlight_symbol);
+            .highlight_symbol(highlight_symbol);
         f.render_stateful_widget(table, area, &mut self.aggregated_table_state);
     }
 
@@ -483,7 +483,7 @@ impl UiState {
                 Some(Focus::IndividualStats),
             ))
             .highlight_style(highlight_style)
-            .highlight_symbol(&highlight_symbol);
+            .highlight_symbol(highlight_symbol);
         f.render_stateful_widget(table, area, &mut self.individual_table_state);
     }
 
