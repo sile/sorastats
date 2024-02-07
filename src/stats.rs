@@ -1,4 +1,5 @@
 use orfail::OrFail;
+use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, SystemTime};
 
@@ -112,7 +113,7 @@ impl std::fmt::Display for StatsItemValue {
 
 #[derive(Debug, Clone, Default)]
 pub struct AggregatedStats {
-    pub items: BTreeMap<StatsItemKey, AggregatedStatsItemValue>,
+    items: BTreeMap<StatsItemKey, AggregatedStatsItemValue>,
 }
 
 impl AggregatedStats {
@@ -144,6 +145,17 @@ impl AggregatedStats {
             })
             .collect();
         Self { items }
+    }
+
+    pub fn get(&self, key: &str) -> Option<&AggregatedStatsItemValue> {
+        self.items.get(key)
+    }
+
+    pub fn filtered_items<'a>(
+        &'a self,
+        filter: &'a Regex,
+    ) -> impl 'a + Iterator<Item = (&StatsItemKey, &AggregatedStatsItemValue)> {
+        self.items.iter().filter(|(k, _)| filter.is_match(k))
     }
 }
 
@@ -188,8 +200,12 @@ impl Stats {
         self.connections.len()
     }
 
-    pub fn item_count(&self) -> usize {
-        self.aggregated.items.len()
+    pub fn filtered_item_count(&self, filter: &Regex) -> usize {
+        self.aggregated
+            .items
+            .iter()
+            .filter(|(k, _)| filter.is_match(k))
+            .count()
     }
 }
 

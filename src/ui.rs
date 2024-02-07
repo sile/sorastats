@@ -443,7 +443,7 @@ impl UiState {
             )),
             Line::from(format!(
                 "Stats  Keys: {:5} (filter={}{})",
-                stats.item_count(),
+                stats.filtered_item_count(&self.options.stats_key_filter),
                 self.options.stats_key_filter,
                 if self.editing_stats_key_filter.is_some() {
                     ""
@@ -488,10 +488,17 @@ impl UiState {
             .map(|h| Cell::from(h).style(Style::default().add_modifier(Modifier::BOLD)));
         let header = Row::new(header_cells).bottom_margin(1);
 
+        let item_count = self
+            .latest_stats()
+            .filtered_item_count(&self.options.stats_key_filter);
         let mut sum_width = 0;
         let mut delta_width = 0;
-        let mut row_items = Vec::with_capacity(self.latest_stats().aggregated.items.len());
-        for (k, item) in &self.latest_stats().aggregated.items {
+        let mut row_items = Vec::with_capacity(item_count);
+        for (k, item) in self
+            .latest_stats()
+            .aggregated
+            .filtered_items(&self.options.stats_key_filter)
+        {
             let sum = item.format_value_sum();
             let delta = item.format_delta_per_sec();
             sum_width = std::cmp::max(sum_width, sum.len());
@@ -521,7 +528,7 @@ impl UiState {
         let highlight_symbol = format!(
             "{:>width$}> ",
             self.aggregated_table_state.selected().unwrap_or(0) + 1,
-            width = (self.latest_stats().item_count()).to_string().len()
+            width = item_count.to_string().len()
         );
 
         let table = Table::new(rows, widths)
@@ -724,7 +731,6 @@ impl UiState {
                 let x = (stats.timestamp - start).as_secs_f64();
                 stats
                     .aggregated
-                    .items
                     .get(key)
                     .and_then(|y| y.delta_per_sec)
                     .map(|y| (x, y))
@@ -736,8 +742,7 @@ impl UiState {
         self.aggregated_table_state.selected().and_then(|i| {
             self.latest_stats()
                 .aggregated
-                .items
-                .iter()
+                .filtered_items(&self.options.stats_key_filter)
                 .nth(i)
                 .map(|(k, _)| k.as_str())
         })
@@ -775,10 +780,16 @@ impl UiState {
     }
 
     fn ensure_table_indices_are_in_ranges(&mut self) {
-        if self.latest_stats().item_count() == 0 {
+        if self
+            .latest_stats()
+            .filtered_item_count(&self.options.stats_key_filter)
+            == 0
+        {
             self.aggregated_table_state.select(None);
         } else {
-            let n = self.latest_stats().item_count();
+            let n = self
+                .latest_stats()
+                .filtered_item_count(&self.options.stats_key_filter);
             let i = std::cmp::min(self.aggregated_table_state.selected().unwrap_or(0), n - 1);
             self.aggregated_table_state.select(Some(i));
         }
