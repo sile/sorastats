@@ -11,6 +11,7 @@ use ratatui::widgets::{
     Axis, Block, Borders, Cell, Chart, Dataset, GraphType, Paragraph, Row, Table, TableState,
 };
 use ratatui::Frame;
+use regex::Regex;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -66,8 +67,13 @@ impl App {
     fn handle_key_event(&mut self, key: KeyEvent) -> orfail::Result<bool> {
         if let Some(editing) = &mut self.ui.editing_stats_key_filter {
             let mut consumed = false;
+            let mut finished = false;
             match key.code {
-                KeyCode::Char('/') => {}
+                KeyCode::Char(c) => {
+                    editing.text.insert(editing.cursor, c);
+                    editing.cursor += 1;
+                    consumed = true;
+                }
                 KeyCode::Left => {
                     editing.cursor = editing.cursor.saturating_sub(1);
                     consumed = true;
@@ -76,10 +82,39 @@ impl App {
                     editing.cursor = std::cmp::min(editing.cursor + 1, editing.text.len());
                     consumed = true;
                 }
+                KeyCode::Backspace => {
+                    if editing.cursor > 0 {
+                        editing.text.remove(editing.cursor - 1);
+                        editing.cursor -= 1;
+                    }
+                    consumed = true;
+                }
+                KeyCode::Delete => {
+                    if editing.cursor < editing.text.len() {
+                        editing.text.remove(editing.cursor);
+                    }
+                    consumed = true;
+                }
+                KeyCode::Enter => {
+                    finished = true;
+                    consumed = true;
+                }
                 _ => {}
             }
             if consumed {
+                if let Ok(regex) = Regex::new(&editing.text) {
+                    editing.valid = true;
+                    self.ui.options.stats_key_filter = regex;
+                } else {
+                    editing.valid = false;
+                }
+
+                if finished {
+                    self.ui.editing_stats_key_filter = None;
+                }
+
                 self.terminal.draw(|f| self.ui.render(f)).or_fail()?;
+
                 return Ok(false);
             }
         }
@@ -102,10 +137,8 @@ impl App {
                 self.ui.end_pos = std::cmp::max(1, self.ui.end_pos.saturating_sub(1));
             }
             KeyCode::Char('/') => {
-                if self.ui.editing_stats_key_filter.take().is_none() {
-                    self.ui.editing_stats_key_filter =
-                        Some(EditingStatsKeyFilter::new(&self.ui.options));
-                }
+                self.ui.editing_stats_key_filter =
+                    Some(EditingStatsKeyFilter::new(&self.ui.options));
             }
             KeyCode::Left => {
                 self.ui.focus = Focus::AggregatedStats;
@@ -355,7 +388,7 @@ impl UiState {
     fn render_footer(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
         let mut text = vec![];
         if let Some(editing) = &self.editing_stats_key_filter {
-            let label = "[EDITING KEY FILTER ('/' to quit)] ";
+            let label = "[EDITING KEY FILTER (Enter to finish)] ";
             text.push(Line::from(format!("{label}{}", editing.text)));
             f.set_cursor(
                 area.x + 1 + (label.len() + editing.cursor) as u16,
@@ -409,9 +442,14 @@ impl UiState {
                 self.options.connection_filter
             )),
             Line::from(format!(
-                "Stats  Keys: {:5} (filter={}, '/' to edit)",
+                "Stats  Keys: {:5} (filter={}{})",
                 stats.item_count(),
-                self.options.stats_key_filter
+                self.options.stats_key_filter,
+                if self.editing_stats_key_filter.is_some() {
+                    ""
+                } else {
+                    ", '/' to edit"
+                }
             )),
         ])
         .block(block)
