@@ -23,11 +23,15 @@ struct Args {
 fn main() -> orfail::Result<()> {
     let args = Args::parse();
 
-    setup_logger(&args)?;
+    setup_logger(&args).or_fail()?;
 
     let rx = poll::StatsPoller::start_thread(args.options.clone()).or_fail()?;
-    let app = ui::App::new(rx, args.options)?;
-    app.run()
+    let app = ui::App::new(rx, args.options).or_fail()?;
+    let result = app.run().or_fail();
+    if let Err(e) = &result {
+        log::error!("{}", e);
+    }
+    result
 }
 
 fn setup_logger(args: &Args) -> orfail::Result<()> {
