@@ -157,7 +157,7 @@ impl StatsPoller {
         for value in item.values {
             connections.push(ConnectionStats::new(value, &self.prev_stats)?);
         }
-        let connections = self.apply_filters(connections);
+        let connections = self.apply_connection_filters(connections);
         let timestamp = item.time.duration_since(start).or_fail()?;
         self.prev_stats = Stats::new(item.time, timestamp, connections);
 
@@ -167,7 +167,7 @@ impl StatsPoller {
         }
     }
 
-    fn apply_filters(&self, connections: Vec<ConnectionStats>) -> Vec<ConnectionStats> {
+    fn apply_connection_filters(&self, connections: Vec<ConnectionStats>) -> Vec<ConnectionStats> {
         connections
             .into_iter()
             .filter(|c| {
@@ -176,11 +176,6 @@ impl StatsPoller {
                         .connection_filter
                         .is_match(&format!("{}:{}", k, v.value))
                 })
-            })
-            .map(|mut c| {
-                c.items
-                    .retain(|k, _v| self.options.stats_key_filter.is_match(k));
-                c
             })
             .collect()
     }

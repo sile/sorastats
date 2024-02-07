@@ -4,13 +4,14 @@ use crate::Options;
 use crossterm::event::{KeyCode, KeyEvent};
 use orfail::OrFail;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Axis, Block, Borders, Cell, Chart, Dataset, GraphType, Paragraph, Row, Table, TableState,
 };
 use ratatui::Frame;
+use regex::Regex;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -64,6 +65,60 @@ impl App {
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) -> orfail::Result<bool> {
+        if let Some(editing) = &mut self.ui.editing_stats_key_filter {
+            let mut consumed = false;
+            let mut finished = false;
+            match key.code {
+                KeyCode::Char(c) => {
+                    editing.text.insert(editing.cursor, c);
+                    editing.cursor += 1;
+                    consumed = true;
+                }
+                KeyCode::Left => {
+                    editing.cursor = editing.cursor.saturating_sub(1);
+                    consumed = true;
+                }
+                KeyCode::Right => {
+                    editing.cursor = std::cmp::min(editing.cursor + 1, editing.text.len());
+                    consumed = true;
+                }
+                KeyCode::Backspace => {
+                    if editing.cursor > 0 {
+                        editing.text.remove(editing.cursor - 1);
+                        editing.cursor -= 1;
+                    }
+                    consumed = true;
+                }
+                KeyCode::Delete => {
+                    if editing.cursor < editing.text.len() {
+                        editing.text.remove(editing.cursor);
+                    }
+                    consumed = true;
+                }
+                KeyCode::Enter => {
+                    finished = true;
+                    consumed = true;
+                }
+                _ => {}
+            }
+            if consumed {
+                if let Ok(regex) = Regex::new(&editing.text) {
+                    editing.valid = true;
+                    self.ui.options.stats_key_filter = regex;
+                } else {
+                    editing.valid = false;
+                }
+
+                if finished {
+                    self.ui.editing_stats_key_filter = None;
+                }
+
+                self.terminal.draw(|f| self.ui.render(f)).or_fail()?;
+
+                return Ok(false);
+            }
+        }
+
         match key.code {
             KeyCode::Char('q') => {
                 return Ok(true);
@@ -80,6 +135,10 @@ impl App {
             }
             KeyCode::Char('h') => {
                 self.ui.end_pos = std::cmp::max(1, self.ui.end_pos.saturating_sub(1));
+            }
+            KeyCode::Char('/') => {
+                self.ui.editing_stats_key_filter =
+                    Some(EditingStatsKeyFilter::new(&self.ui.options));
             }
             KeyCode::Left => {
                 self.ui.focus = Focus::AggregatedStats;
@@ -233,6 +292,7 @@ struct UiState {
     pause: bool,
     realtime: bool,
     poll_failed_count: usize,
+    editing_stats_key_filter: Option<EditingStatsKeyFilter>,
 
     // For replay mode
     eof: bool,
@@ -259,6 +319,7 @@ impl UiState {
             pause: false,
             realtime,
             poll_failed_count: 0,
+            editing_stats_key_filter: None,
             eof: false,
             end_pos: 0,
         }
@@ -326,7 +387,14 @@ impl UiState {
 
     fn render_footer(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
         let mut text = vec![];
-        if let Some(key) = self.selected_item_key() {
+        if let Some(editing) = &self.editing_stats_key_filter {
+            let label = "[EDITING KEY FILTER (Enter to finish)] ";
+            text.push(Line::from(format!("{label}{}", editing.text)));
+            f.set_cursor(
+                area.x + 1 + (label.len() + editing.cursor) as u16,
+                area.y + 1,
+            );
+        } else if let Some(key) = self.selected_item_key() {
             text.push(Line::from(format!("[KEY] {}", key)));
         } else if self.poll_failed_count > 0 {
             text.push(Line::from(format!(
@@ -335,9 +403,16 @@ impl UiState {
             )));
         }
 
-        let paragraph = Paragraph::new(text)
+        let mut paragraph = Paragraph::new(text)
             .block(Block::default().borders(Borders::ALL))
             .alignment(Alignment::Left);
+        if let Some(editing) = &self.editing_stats_key_filter {
+            if editing.valid {
+                paragraph = paragraph.style(Style::default().fg(Color::Green));
+            } else {
+                paragraph = paragraph.style(Style::default().fg(Color::Red));
+            }
+        }
         f.render_widget(paragraph, area);
     }
 
@@ -367,9 +442,14 @@ impl UiState {
                 self.options.connection_filter
             )),
             Line::from(format!(
-                "Stats  Keys: {:5} (filter={})",
-                stats.item_count(),
-                self.options.stats_key_filter
+                "Stats  Keys: {:5} (filter={}{})",
+                stats.filtered_item_count(&self.options.stats_key_filter),
+                self.options.stats_key_filter,
+                if self.editing_stats_key_filter.is_some() {
+                    ""
+                } else {
+                    ", '/' to edit"
+                }
             )),
         ])
         .block(block)
@@ -408,10 +488,17 @@ impl UiState {
             .map(|h| Cell::from(h).style(Style::default().add_modifier(Modifier::BOLD)));
         let header = Row::new(header_cells).bottom_margin(1);
 
+        let item_count = self
+            .latest_stats()
+            .filtered_item_count(&self.options.stats_key_filter);
         let mut sum_width = 0;
         let mut delta_width = 0;
-        let mut row_items = Vec::with_capacity(self.latest_stats().aggregated.items.len());
-        for (k, item) in &self.latest_stats().aggregated.items {
+        let mut row_items = Vec::with_capacity(item_count);
+        for (k, item) in self
+            .latest_stats()
+            .aggregated
+            .filtered_items(&self.options.stats_key_filter)
+        {
             let sum = item.format_value_sum();
             let delta = item.format_delta_per_sec();
             sum_width = std::cmp::max(sum_width, sum.len());
@@ -441,7 +528,7 @@ impl UiState {
         let highlight_symbol = format!(
             "{:>width$}> ",
             self.aggregated_table_state.selected().unwrap_or(0) + 1,
-            width = (self.latest_stats().item_count()).to_string().len()
+            width = item_count.to_string().len()
         );
 
         let table = Table::new(rows, widths)
@@ -644,7 +731,6 @@ impl UiState {
                 let x = (stats.timestamp - start).as_secs_f64();
                 stats
                     .aggregated
-                    .items
                     .get(key)
                     .and_then(|y| y.delta_per_sec)
                     .map(|y| (x, y))
@@ -656,8 +742,7 @@ impl UiState {
         self.aggregated_table_state.selected().and_then(|i| {
             self.latest_stats()
                 .aggregated
-                .items
-                .iter()
+                .filtered_items(&self.options.stats_key_filter)
                 .nth(i)
                 .map(|(k, _)| k.as_str())
         })
@@ -695,10 +780,16 @@ impl UiState {
     }
 
     fn ensure_table_indices_are_in_ranges(&mut self) {
-        if self.latest_stats().item_count() == 0 {
+        if self
+            .latest_stats()
+            .filtered_item_count(&self.options.stats_key_filter)
+            == 0
+        {
             self.aggregated_table_state.select(None);
         } else {
-            let n = self.latest_stats().item_count();
+            let n = self
+                .latest_stats()
+                .filtered_item_count(&self.options.stats_key_filter);
             let i = std::cmp::min(self.aggregated_table_state.selected().unwrap_or(0), n - 1);
             self.aggregated_table_state.select(Some(i));
         }
@@ -709,6 +800,25 @@ impl UiState {
             let n = self.latest_stats().connection_count();
             let i = std::cmp::min(self.individual_table_state.selected().unwrap_or(0), n - 1);
             self.individual_table_state.select(Some(i));
+        }
+    }
+}
+
+#[derive(Debug)]
+struct EditingStatsKeyFilter {
+    cursor: usize,
+    text: String,
+    valid: bool,
+}
+
+impl EditingStatsKeyFilter {
+    fn new(options: &Options) -> Self {
+        let text = options.stats_key_filter.to_string();
+        let cursor = text.len();
+        Self {
+            cursor,
+            text,
+            valid: true,
         }
     }
 }
