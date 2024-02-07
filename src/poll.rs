@@ -9,15 +9,15 @@ use std::time::{Duration, Instant, SystemTime};
 const SORA_API_HEADER_NAME: &str = "x-sora-target";
 const SORA_API_HEADER_VALUE: &str = "Sora_20171101.GetStatsAllConnections";
 
-pub type StatsReceiver = mpsc::Receiver<Stats>;
+pub type StatsReceiver = mpsc::Receiver<Option<Stats>>;
 
 #[derive(Debug)]
 enum Mode {
     Realtime {
-        tx: mpsc::Sender<Stats>,
+        tx: mpsc::Sender<Option<Stats>>,
     },
     Replay {
-        tx: mpsc::SyncSender<Stats>,
+        tx: mpsc::SyncSender<Option<Stats>>,
         reader: BufReader<File>,
     },
 }
@@ -58,7 +58,7 @@ impl StatsPoller {
         };
         match &mut poller.mode {
             Mode::Realtime { .. } => {
-                poller.poll_once()?;
+                poller.poll_once().or_fail()?;
             }
             Mode::Replay { reader, .. } => {
                 if reader.get_mut().metadata().or_fail()?.len() == 0 {
@@ -72,7 +72,7 @@ impl StatsPoller {
 
     fn run(mut self) {
         loop {
-            match self.run_once() {
+            match self.run_once().or_fail() {
                 Err(e) => {
                     log::error!("failed to poll Sora stats: {}", e);
                     break;
@@ -97,19 +97,23 @@ impl StatsPoller {
                 std::thread::sleep(duration);
             }
         }
-        self.poll_once()
+        self.poll_once().or_fail()
     }
 
     fn poll_once(&mut self) -> orfail::Result<bool> {
         self.prev_request_time = Instant::now();
         let item = match &mut self.mode {
-            Mode::Realtime { .. } => {
-                let values: Vec<serde_json::Value> = ureq::post(&self.options.sora_api_url)
+            Mode::Realtime { tx, .. } => {
+                let values: Vec<serde_json::Value> = match ureq::post(&self.options.sora_api_url)
                     .set(SORA_API_HEADER_NAME, SORA_API_HEADER_VALUE)
                     .call()
-                    .or_fail()?
-                    .into_json()
-                    .or_fail()?;
+                {
+                    Err(e) => {
+                        log::debug!("HTTP POST failed: {e}");
+                        return Ok(tx.send(None).is_ok());
+                    }
+                    Ok(response) => response.into_json().or_fail()?,
+                };
                 let item = RecordItem {
                     time: SystemTime::now(),
                     values,
@@ -158,8 +162,8 @@ impl StatsPoller {
         self.prev_stats = Stats::new(item.time, timestamp, connections);
 
         match &self.mode {
-            Mode::Realtime { tx } => Ok(tx.send(self.prev_stats.clone()).is_ok()),
-            Mode::Replay { tx, .. } => Ok(tx.send(self.prev_stats.clone()).is_ok()),
+            Mode::Realtime { tx } => Ok(tx.send(Some(self.prev_stats.clone())).is_ok()),
+            Mode::Replay { tx, .. } => Ok(tx.send(Some(self.prev_stats.clone())).is_ok()),
         }
     }
 

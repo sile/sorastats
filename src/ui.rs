@@ -12,7 +12,7 @@ use ratatui::widgets::{
 };
 use ratatui::Frame;
 use std::collections::VecDeque;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 
 type Terminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>;
 
@@ -20,30 +20,39 @@ pub struct App {
     rx: StatsReceiver,
     terminal: Terminal,
     ui: UiState,
+    start_time: Instant,
 }
 
 impl App {
     pub fn new(rx: StatsReceiver, options: Options) -> orfail::Result<Self> {
-        let terminal = Self::setup_terminal()?;
+        let terminal = Self::setup_terminal().or_fail()?;
+        std::panic::set_hook(Box::new(|info| {
+            log::error!("{info}");
+        }));
         log::debug!("setup terminal");
         let ui = UiState::new(options);
-        Ok(Self { rx, ui, terminal })
+        Ok(Self {
+            rx,
+            ui,
+            terminal,
+            start_time: Instant::now(),
+        })
     }
 
     pub fn run(mut self) -> orfail::Result<()> {
         if !self.ui.realtime {
-            self.handle_replay_stats_poll()?;
+            self.handle_replay_stats_poll().or_fail()?;
         }
 
         loop {
-            if self.handle_event()? {
+            if self.handle_event().or_fail()? {
                 break;
             }
             if self.ui.realtime {
                 if self.ui.pause {
                     std::thread::sleep(self.recv_timeout());
                 } else {
-                    self.handle_realtime_stats_poll()?;
+                    self.handle_realtime_stats_poll().or_fail()?;
                 }
             }
         }
@@ -129,6 +138,7 @@ impl App {
         if self.ui.end_pos < self.ui.history.len() {
             self.ui.end_pos += 1;
         } else if let Ok(stats) = self.rx.recv() {
+            let stats = stats.or_fail()?;
             log::debug!("recv new stats");
             self.ui.history.push_back(stats);
             self.ui.end_pos += 1;
@@ -151,9 +161,16 @@ impl App {
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Ok(stats) => {
-                log::debug!("recv new stats");
-                let timestamp = stats.timestamp;
-                self.ui.history.push_back(stats);
+                let timestamp = if let Some(stats) = stats {
+                    log::debug!("recv new stats");
+                    self.ui.poll_failed_count = 0;
+                    let timestamp = stats.timestamp;
+                    self.ui.history.push_back(stats);
+                    timestamp
+                } else {
+                    self.ui.poll_failed_count += 1;
+                    self.start_time.elapsed()
+                };
                 while let Some(item) = self.ui.history.pop_front() {
                     let duration = (timestamp - item.timestamp).as_secs();
                     if duration <= self.ui.options.chart_time_period.get() as u64 {
@@ -215,6 +232,7 @@ struct UiState {
     focus: Focus,
     pause: bool,
     realtime: bool,
+    poll_failed_count: usize,
 
     // For replay mode
     eof: bool,
@@ -224,14 +242,23 @@ struct UiState {
 impl UiState {
     fn new(options: Options) -> Self {
         let realtime = options.is_realtime_mode();
+        let mut history = VecDeque::new();
+        if realtime {
+            history.push_back(Stats::new(
+                SystemTime::now(),
+                Duration::from_secs(0),
+                Vec::new(),
+            ));
+        }
         Self {
             options,
-            history: VecDeque::new(),
+            history,
             aggregated_table_state: TableState::default(),
             individual_table_state: TableState::default(),
             focus: Focus::AggregatedStats,
             pause: false,
             realtime,
+            poll_failed_count: 0,
             eof: false,
             end_pos: 0,
         }
@@ -301,6 +328,11 @@ impl UiState {
         let mut text = vec![];
         if let Some(key) = self.selected_item_key() {
             text.push(Line::from(format!("[KEY] {}", key)));
+        } else if self.poll_failed_count > 0 {
+            text.push(Line::from(format!(
+                "[ERROR] Cannot connect to {} (retried {} times)",
+                self.options.sora_api_url, self.poll_failed_count
+            )));
         }
 
         let paragraph = Paragraph::new(text)
