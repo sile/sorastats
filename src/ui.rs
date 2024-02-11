@@ -220,18 +220,17 @@ impl App {
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Ok(stats) => {
-                let timestamp = if let Some(stats) = stats {
+                let timestamp = self.start_time.elapsed();
+                if let Some(mut stats) = stats {
                     log::debug!("recv new stats");
                     self.ui.poll_failed_count = 0;
-                    let timestamp = stats.timestamp;
+                    stats.timestamp = timestamp;
                     self.ui.history.push_back(stats);
-                    timestamp
                 } else {
                     self.ui.poll_failed_count += 1;
-                    self.start_time.elapsed()
                 };
                 while let Some(item) = self.ui.history.pop_front() {
-                    let duration = (timestamp - item.timestamp).as_secs();
+                    let duration = (timestamp.checked_sub(item.timestamp)).or_fail()?.as_secs();
                     if duration <= self.ui.options.chart_time_period.get() as u64 {
                         self.ui.history.push_front(item);
                         break;
