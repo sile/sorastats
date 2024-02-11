@@ -30,6 +30,7 @@ fn main() -> orfail::Result<()> {
     let result = app.run().or_fail();
     if let Err(e) = &result {
         log::error!("{}", e);
+        println!();
     }
     result
 }
