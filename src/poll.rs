@@ -119,6 +119,7 @@ impl StatsPoller {
                     values,
                 };
                 if let Some(mut recorder) = self.recorder.as_mut() {
+                    #[allow(clippy::needless_borrows_for_generic_args)]
                     serde_json::to_writer(&mut recorder, &item).or_fail()?;
                     writeln!(recorder).or_fail()?;
                     recorder.flush().or_fail()?;
