@@ -367,7 +367,7 @@ impl UiState {
                 ]
                 .as_ref(),
             )
-            .split(f.size());
+            .split(f.area());
 
         self.render_header(f, chunks[0]);
         self.render_body(f, chunks[1]);
@@ -389,10 +389,10 @@ impl UiState {
         if let Some(editing) = &self.editing_stats_key_filter {
             let label = "[EDITING KEY FILTER (Enter to finish)] ";
             text.push(Line::from(format!("{label}{}", editing.text)));
-            f.set_cursor(
+            f.set_cursor_position((
                 area.x + 1 + (label.len() + editing.cursor) as u16,
                 area.y + 1,
-            );
+            ));
         } else if let Some(key) = self.selected_item_key() {
             text.push(Line::from(format!("[KEY] {}", key)));
         } else if self.poll_failed_count > 0 {
@@ -533,7 +533,7 @@ impl UiState {
         let table = Table::new(rows, widths)
             .header(header)
             .block(self.make_block("Aggregated Stats", Some(Focus::AggregatedStats)))
-            .highlight_style(highlight_style)
+            .row_highlight_style(highlight_style)
             .highlight_symbol(highlight_symbol);
         f.render_stateful_widget(table, area, &mut self.aggregated_table_state);
     }
@@ -620,7 +620,7 @@ impl UiState {
                 &format!("Values of {:?}", selected_key.unwrap_or("")),
                 Some(Focus::IndividualStats),
             ))
-            .highlight_style(highlight_style)
+            .row_highlight_style(highlight_style)
             .highlight_symbol(highlight_symbol);
         f.render_stateful_widget(table, area, &mut self.individual_table_state);
     }
