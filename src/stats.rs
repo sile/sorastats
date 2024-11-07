@@ -154,7 +154,7 @@ impl AggregatedStats {
     pub fn filtered_items<'a>(
         &'a self,
         filter: &'a Regex,
-    ) -> impl 'a + Iterator<Item = (&StatsItemKey, &AggregatedStatsItemValue)> {
+    ) -> impl 'a + Iterator<Item = (&'a StatsItemKey, &'a AggregatedStatsItemValue)> {
         self.items.iter().filter(|(k, _)| filter.is_match(k))
     }
 }
