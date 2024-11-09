@@ -1,7 +1,7 @@
 use crate::poll::StatsReceiver;
 use crate::stats::{format_u64, Stats};
 use crate::Options;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use orfail::OrFail;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
@@ -66,6 +66,9 @@ impl App {
 
     fn handle_key_event(&mut self, key: KeyEvent) -> orfail::Result<bool> {
         if let Some(editing) = &mut self.ui.editing_stats_key_filter {
+            if key.kind != KeyEventKind::Press {
+                return Ok(false);
+            }
             let mut consumed = false;
             let mut finished = false;
             match key.code {
