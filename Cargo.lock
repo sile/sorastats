@@ -781,6 +781,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "noargs"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a0c67c67bde59ae289ec6d68089f3e399b9cb7a2941875d1e94a1123c401308"
+
+[[package]]
 name = "num-conv"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1144,6 +1150,7 @@ dependencies = [
  "clap",
  "crossterm 0.29.0",
  "log",
+ "noargs",
  "orfail",
  "ratatui",
  "regex",
