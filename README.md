@@ -22,7 +22,7 @@ Linux および MacOS 向けにはビルド済みバイナリが[リリースペ
 
 ```console
 // Linux でビルド済みバイナリを取得する例
-$ curl -L https://github.com/sile/sorastats/releases/download/0.2.0/sorastats-0.2.0.x86_64-unknown-linux-musl -o sorastats
+$ curl -L https://github.com/sile/sorastats/releases/download/0.3.0/sorastats-0.3.0.x86_64-unknown-linux-musl -o sorastats
 $ chmod +x sorastats
 $ ./sorastats
 ```
