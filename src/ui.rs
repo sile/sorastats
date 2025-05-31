@@ -27,10 +27,6 @@ pub struct App {
 impl App {
     pub fn new(rx: StatsReceiver, options: Options) -> orfail::Result<Self> {
         let terminal = Self::setup_terminal().or_fail()?;
-        std::panic::set_hook(Box::new(|info| {
-            log::error!("{info}");
-        }));
-        log::debug!("setup terminal");
         let ui = UiState::new(options);
         Ok(Self {
             rx,
@@ -201,7 +197,6 @@ impl App {
             self.ui.end_pos += 1;
         } else if let Ok(stats) = self.rx.recv() {
             let stats = stats.or_fail()?;
-            log::debug!("recv new stats");
             self.ui.history.push_back(stats);
             self.ui.end_pos += 1;
         } else {
@@ -225,7 +220,6 @@ impl App {
             Ok(stats) => {
                 let timestamp = self.start_time.elapsed();
                 if let Some(mut stats) = stats {
-                    log::debug!("recv new stats");
                     self.ui.poll_failed_count = 0;
                     stats.timestamp = timestamp;
                     self.ui.history.push_back(stats);
@@ -238,7 +232,6 @@ impl App {
                         self.ui.history.push_front(item);
                         break;
                     }
-                    log::debug!("remove old stats");
                 }
                 self.ui.ensure_table_indices_are_in_ranges();
                 self.terminal.draw(|f| self.ui.render(f)).or_fail()?;
@@ -270,11 +263,7 @@ impl App {
 
 impl Drop for App {
     fn drop(&mut self) {
-        if let Err(e) = self.teardown_terminal() {
-            log::warn!("failed to tear down terminal: {e}");
-        } else {
-            log::debug!("tear down terminal");
-        }
+        let _ = self.teardown_terminal();
     }
 }
 
@@ -335,7 +324,7 @@ impl UiState {
         }
     }
 
-    #[allow(clippy::iter_skip_zero)]
+    #[expect(clippy::iter_skip_zero)]
     fn history_window(&self) -> (Duration, impl Iterator<Item = &Stats>) {
         if self.realtime {
             let start = self.history[0].timestamp;

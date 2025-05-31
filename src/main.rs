@@ -5,9 +5,6 @@ use std::path::PathBuf;
 #[derive(Debug)]
 struct Args {
     options: sorastats::Options,
-    logfile: Option<PathBuf>,
-    loglevel: simplelog::LevelFilter,
-    truncate_log: bool,
 }
 
 impl Args {
@@ -91,18 +88,6 @@ impl Args {
             .take(&mut args)
             .present_and_then(|o| o.value().parse())?;
 
-        let logfile: Option<PathBuf> = noargs::opt("logfile")
-            .take(&mut args)
-            .present_and_then(|o| o.value().parse())?;
-
-        let loglevel: simplelog::LevelFilter = noargs::opt("loglevel")
-            .default("Info")
-            .take(&mut args)
-            .then(|o| o.value().parse())?;
-
-        let truncate_log: bool = noargs::flag("truncate-log").take(&mut args).is_present();
-
-        // Check for unexpected args and build help if needed
         if let Some(help) = args.finish()? {
             print!("{}", help);
             std::process::exit(0);
@@ -117,39 +102,14 @@ impl Args {
                 stats_key_filter,
                 record,
             },
-            logfile,
-            loglevel,
-            truncate_log,
         })
     }
 }
 
 fn main() -> noargs::Result<()> {
     let args = Args::parse()?;
-
-    setup_logger(&args).or_fail()?;
-
     let rx = poll::StatsPoller::start_thread(args.options.clone()).or_fail()?;
     let app = ui::App::new(rx, args.options).or_fail()?;
-    let result = app.run().or_fail();
-    if let Err(e) = &result {
-        log::error!("{}", e);
-        println!();
-    }
-    result?;
-    Ok(())
-}
-
-fn setup_logger(args: &Args) -> orfail::Result<()> {
-    if let Some(logfile) = &args.logfile {
-        let file = std::fs::OpenOptions::new()
-            .append(!args.truncate_log)
-            .truncate(args.truncate_log)
-            .create(true)
-            .write(true)
-            .open(logfile)
-            .or_fail_with(|e| format!("failed to open log file {logfile:?}: {e}"))?;
-        simplelog::WriteLogger::init(args.loglevel, Default::default(), file).or_fail()?;
-    }
+    app.run().or_fail()?;
     Ok(())
 }

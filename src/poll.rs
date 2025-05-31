@@ -73,16 +73,10 @@ impl StatsPoller {
     fn run(mut self) {
         loop {
             match self.run_once().or_fail() {
-                Err(e) => {
-                    log::error!("failed to poll Sora stats: {}", e);
+                Err(_e) => {
                     break;
                 }
                 Ok(false) => {
-                    if matches!(self.mode, Mode::Realtime { .. }) {
-                        log::debug!("stop polling as the main thread has finished");
-                    } else {
-                        log::debug!("reached EOF");
-                    }
                     break;
                 }
                 Ok(true) => {}
@@ -108,8 +102,7 @@ impl StatsPoller {
                     .header(SORA_API_HEADER_NAME, SORA_API_HEADER_VALUE)
                     .send_empty()
                 {
-                    Err(e) => {
-                        log::debug!("HTTP POST failed: {e}");
+                    Err(_e) => {
                         return Ok(tx.send(None).is_ok());
                     }
                     Ok(response) => response.into_body().read_json().or_fail()?,
@@ -119,19 +112,10 @@ impl StatsPoller {
                     values,
                 };
                 if let Some(mut recorder) = self.recorder.as_mut() {
-                    #[allow(clippy::needless_borrows_for_generic_args)]
                     serde_json::to_writer(&mut recorder, &item).or_fail()?;
                     writeln!(recorder).or_fail()?;
                     recorder.flush().or_fail()?;
                 }
-                log::debug!(
-                    "HTTP POST {} {}:{} (elapsed: {:?}, connections: {})",
-                    self.options.sora_api_url,
-                    SORA_API_HEADER_NAME,
-                    SORA_API_HEADER_VALUE,
-                    self.prev_request_time.elapsed(),
-                    item.values.len()
-                );
                 item
             }
             Mode::Replay { reader, .. } => {
@@ -141,8 +125,6 @@ impl StatsPoller {
                     return Ok(false); // EOF
                 }
                 let item: RecordItem = serde_json::from_str(&buf).or_fail()?;
-                log::debug!("Read a record entry (connections: {})", item.values.len());
-
                 item
             }
         };
