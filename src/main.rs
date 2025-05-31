@@ -22,7 +22,7 @@ impl Args {
 
         let sora_api_url: String = noargs::arg("<SORA_API_URL>")
             .doc("「Sora の API の URL（リアルタイムモード）」あるいは「過去に `--record` で記録したファイルのパス（リプレイモード）」")
-            .example("http://localhost:5000/api")
+            .example("http://localhost:3000/")
             .take(&mut args)
             .then(|a| a.value().parse())?;
 
