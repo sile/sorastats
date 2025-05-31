@@ -13,7 +13,6 @@ readme = "README.md"
 
 [dependencies]
 chrono = "0.4"
-clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
 log = "0.4"
 noargs = "0.3.2"
