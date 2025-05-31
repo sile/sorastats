@@ -98,10 +98,14 @@ impl StatsPoller {
         self.prev_request_time = Instant::now();
         let item = match &mut self.mode {
             Mode::Realtime { tx, .. } => {
-                let values: Vec<serde_json::Value> = match ureq::post(&self.options.sora_api_url)
-                    .header(SORA_API_HEADER_NAME, SORA_API_HEADER_VALUE)
-                    .send_empty()
-                {
+                let request = ureq::post(&self.options.sora_api_url)
+                    .header(SORA_API_HEADER_NAME, SORA_API_HEADER_VALUE);
+                let request_result = if self.options.global {
+                    request.send_json(serde_json::json!({"local": false}))
+                } else {
+                    request.send_empty()
+                };
+                let values: Vec<serde_json::Value> = match request_result {
                     Err(_e) => {
                         return Ok(tx.send(None).is_ok());
                     }
