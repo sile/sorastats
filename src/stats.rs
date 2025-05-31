@@ -291,7 +291,7 @@ fn collect_stats_items(
                 if let Some(v) = v.as_f64() {
                     items.insert(key.clone(), StatsItemValue::Number(v));
                 } else {
-                    log::warn!("too large number (ignored): {v}");
+                    panic!("too large number: {v}");
                 }
             }
             serde_json::Value::Bool(v) => {
@@ -304,7 +304,7 @@ fn collect_stats_items(
                 collect_stats_items(children, items, key);
             }
             _ => {
-                log::warn!("unexpected stats value (ignored): {v}");
+                panic!("unexpected stats value: {v}");
             }
         };
         key.truncate(old_len);
