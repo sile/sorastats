@@ -66,61 +66,23 @@ $ sorastats ${SORA_API_URL}
 `$ sorastats --help` コマンドを叩くと、以下のようなヘルプメッセージが表示されます。
 
 ```console
-$ sorastats 0.1.1
+$ sorastats
 WebRTC SFU Sora の統計情報ビューア
 
-USAGE:
-    sorastats [OPTIONS] <SORA_API_URL>
+Usage: sorastats [OPTIONS] <SORA_API_URL>
 
-ARGS:
-    <SORA_API_URL>
-            「Sora の API の URL（リアルタイムモード）」あるいは「過去に `--record`
-            で記録したファイルのパス（リプレイモード）」
+Example:
+  $ sorastats http://localhost:5000/api
 
-OPTIONS:
-    -c, --connection-filter <CONNECTION_FILTER>
-            集計対象に含めるコネクションをフィルタするための正規表現
+Arguments:
+  <SORA_API_URL> 「Sora の API の URL（リアルタイムモード）」あるいは「過去に `--record` で記録したファイルのパス（リプレイモード）」
 
-            コネクションの各統計値は "${KEY}:${VALUE}" という形式の文字列に変換された上で、
-            指定の正規表現にマッチ（部分一致）するかどうかがチェックされる。
-            一つでもマッチする統計値が存在する場合には、そのコネクションは集計対象に含まれる。
-
-            例えば、チャンネル名が "sora" のコネクションのみを対象にしたい場合には
-            "^channel_id:sora$" という正規表現を指定すると良い。
-
-            [default: .*:.*]
-
-    -h, --help
-            Print help information
-
-    -i, --polling-interval <POLLING_INTERVAL>
-            統計 API から情報を取得する間隔（秒単位）
-
-            [default: 1]
-
-    -k, --stats-key-filter <STATS_KEY_FILTER>
-            集計対象に含める統計項目をフィルタするための正規表現
-
-            指定された正規表現にマッチ（部分一致）する統計項目のみが表示される。
-
-            例えば、 RTP 関連の統計情報のみを対象としたい場合には "^rtp[.]"
-            という正規表現を指定すると良い。
-
-            [default: .*]
-
-    -p, --chart-time-period <CHART_TIME_PERIOD>
-            チャートの X 軸の表示期間（秒単位）
-
-            [default: 60]
-
-        --record <RECORD>
-            指定されたファイルに取得した統計情報を記録する
-
-            `<SORA_API_URL>`引数に URL の代わりにこのファイルへのパスを指定することで、
-            記録した統計情報を後から閲覧することができる（リプレイモード）
-
-            リプレイモードの場合には、このオプションを指定しても無視される
-
-    -V, --version
-            Print version information
+Options:
+      --version                           Print version
+  -h, --help                              Print help ('--help' for full help, '-h' for summary)
+  -i, --polling-interval <INTEGER>        統計 API から情報を取得する間隔（秒単位） [default: 1]
+  -p, --chart-time-period <INTEGER>       チャートの X 軸の表示期間（秒単位） [default: 60]
+  -c, --connection-filter <REGEXP:REGEXP> 集計対象に含めるコネクションをフィルタするための正規表現 [default: .*:.*]
+  -k, --stats-key-filter <REGEXP>         集計対象に含める統計項目をフィルタするための正規表現 [default: .*]
+      --record <PATH>                     指定されたファイルに、取得した統計情報を記録する
 ```
