@@ -32,6 +32,7 @@ impl Args {
         let polling_interval: std::num::NonZeroUsize = noargs::opt("polling-interval")
             .short('i')
             .doc("統計 API から情報を取得する間隔（秒単位）")
+            .ty("INTEGER")
             .default("1")
             .take(&mut args)
             .then(|o| o.value().parse())?;
@@ -39,6 +40,7 @@ impl Args {
         let chart_time_period: std::num::NonZeroUsize = noargs::opt("chart-time-period")
             .short('p')
             .doc("チャートの X 軸の表示期間（秒単位）")
+            .ty("INTEGER")
             .default("60")
             .take(&mut args)
             .then(|o| o.value().parse())?;
@@ -56,6 +58,7 @@ impl Args {
                 "'^channel_id:sora$' という正規表現を指定すると良い。\n",
 
             ))
+            .ty("REGEXP:REGEXP")
             .default(".*:.*")
             .take(&mut args)
             .then(|o| regex::Regex::new(o.value()))?;
@@ -70,6 +73,7 @@ impl Args {
                 "例えば、 RTP 関連の統計情報のみを対象としたい場合には\n",
                 "'^rtp[.]' という正規表現を指定すると良い。\n",
             ))
+            .ty("REGEXP")
             .default(".*")
             .take(&mut args)
             .then(|o| regex::Regex::new(o.value()))?;
@@ -83,6 +87,7 @@ impl Args {
                 "\n",
                 "リプレイモードの場合には、このオプションを指定しても無視される\n"
             ))
+            .ty("PATH")
             .take(&mut args)
             .present_and_then(|o| o.value().parse())?;
 
