@@ -10,7 +10,7 @@ sorastats
 ![sorastats demo](sorastats.gif)
 
 [WebRTC SFU Sora]: https://sora.shiguredo.jp/
-[統計 API]: https://sora-doc.shiguredo.jp/API#dacb9c
+[統計 API]: https://sora-doc.shiguredo.jp/API_STATS
 
 
 インストール
