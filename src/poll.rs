@@ -105,14 +105,14 @@ impl StatsPoller {
         let item = match &mut self.mode {
             Mode::Realtime { tx, .. } => {
                 let values: Vec<serde_json::Value> = match ureq::post(&self.options.sora_api_url)
-                    .set(SORA_API_HEADER_NAME, SORA_API_HEADER_VALUE)
-                    .call()
+                    .header(SORA_API_HEADER_NAME, SORA_API_HEADER_VALUE)
+                    .send_empty()
                 {
                     Err(e) => {
                         log::debug!("HTTP POST failed: {e}");
                         return Ok(tx.send(None).is_ok());
                     }
-                    Ok(response) => response.into_json().or_fail()?,
+                    Ok(response) => response.into_body().read_json().or_fail()?,
                 };
                 let item = RecordItem {
                     time: SystemTime::now(),
