@@ -15,6 +15,7 @@ pub struct Options {
     pub connection_filter: regex::Regex,
     pub stats_key_filter: regex::Regex,
     pub record: Option<PathBuf>,
+    pub global: bool,
 }
 
 impl Options {

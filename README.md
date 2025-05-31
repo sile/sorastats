@@ -85,4 +85,5 @@ Options:
   -c, --connection-filter <REGEXP:REGEXP> 集計対象に含めるコネクションをフィルタするための正規表現 [default: .*:.*]
   -k, --stats-key-filter <REGEXP>         集計対象に含める統計項目をフィルタするための正規表現 [default: .*]
       --record <PATH>                     指定されたファイルに、取得した統計情報を記録する
+      --global                            指定された場合は、クラスター全体の統計値を取得します
 ```

@@ -88,6 +88,11 @@ impl Args {
             .take(&mut args)
             .present_and_then(|o| o.value().parse())?;
 
+        let global = noargs::flag("global")
+            .doc("指定された場合は、クラスター全体の統計値を取得します")
+            .take(&mut args)
+            .is_present();
+
         if let Some(help) = args.finish()? {
             print!("{}", help);
             std::process::exit(0);
@@ -101,6 +106,7 @@ impl Args {
                 connection_filter,
                 stats_key_filter,
                 record,
+                global,
             },
         })
     }
