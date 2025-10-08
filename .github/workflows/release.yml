@@ -36,9 +36,9 @@ jobs:
       matrix:
         platform:
           - target: x86_64-unknown-linux-musl
-            runs-on: ubuntu-latest
+            runs-on: ubuntu-24.04
           - target: aarch64-unknown-linux-musl
-            runs-on: ubuntu-latest-arm
+            runs-on: ubuntu-24.04-arm
     runs-on: ${{ matrix.platform.runs-on }}
     needs: github-release-draft
     steps:
