@@ -15,7 +15,7 @@ jobs:
       version: ${{ steps.get_version.outputs.VERSION }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Get the version
         id: get_version
@@ -43,7 +43,7 @@ jobs:
     needs: github-release-draft
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install dependent packages
         run: sudo apt install -y musl-tools
@@ -70,7 +70,7 @@ jobs:
         target: ["x86_64-apple-darwin", "aarch64-apple-darwin"]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - run: rustup update stable
       - run: rustup default stable
@@ -96,7 +96,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - run: rustup update stable
       - run: rustup default stable
