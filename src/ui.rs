@@ -178,10 +178,8 @@ impl App {
     fn handle_event(&mut self) -> orfail::Result<bool> {
         while crossterm::event::poll(std::time::Duration::from_secs(0)).or_fail()? {
             match crossterm::event::read().or_fail()? {
-                crossterm::event::Event::Key(key) => {
-                    if self.handle_key_event(key)? {
-                        return Ok(true);
-                    }
+                crossterm::event::Event::Key(key) if self.handle_key_event(key)? => {
+                    return Ok(true);
                 }
                 crossterm::event::Event::Resize(_, _) => {
                     self.terminal.draw(|f| self.ui.render(f)).or_fail()?;
